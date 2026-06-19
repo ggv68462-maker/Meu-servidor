@@ -1,54 +1,44 @@
-const express = require("express");
+const express = require('express');
 const app = express();
 
 app.use(express.json());
 
-let mensagens = [];
-let estoque = [];
+// Memória temporária para armazenar a lista vinda do Termux
+let bancoEstoque = [];
 
-// STATUS
 app.get("/", (req, res) => {
-res.send("Servidor online!");
+    res.send("Servidor central online!");
 });
 
-// CHAT
-app.get("/mensagens", (req, res) => {
-res.json(mensagens);
+// Rota onde o Termux envia a lista com códigos e links
+app.post("/atualizar-estoque", (req, res) => {
+    const { itens } = req.body;
+    if (!itens || !Array.isArray(itens)) {
+        return res.status(400).json({ OK: false, erro: "Formato de dados inválido" });
+    }
+    bancoEstoque = itens;
+    console.log(`Estoque atualizado pelo Termux. Total de itens: ${bancoEstoque.length}`);
+    res.json({ OK: true, total: bancoEstoque.length });
 });
 
-app.post("/mensagens", (req, res) => {
-mensagens.push(req.body);
-res.json({ ok: true });
+// Rota onde o aplicativo solicita o link enviando o código por parâmetro (ex: /obter-link?codigo=B1)
+app.get("/obter-link", (req, res) => {
+    const codigoBuscado = req.query.codigo;
+    
+    if (!codigoBuscado) {
+        return res.status(400).json({ OK: false, erro: "Código não informado" });
+    }
+
+    const itemEncontrado = bancoEstoque.find(item => item.codigo.toUpperCase() === codigoBuscado.toUpperCase());
+
+    if (!itemEncontrado) {
+        return res.status(404).json({ OK: false, erro: "Código não localizado no estoque atual" });
+    }
+
+    // Retorna a URL direta do vídeo para o aplicativo efetuar o download
+    res.json({ OK: true, link: itemEncontrado.link, nome: itemEncontrado.nome });
 });
 
-// ESTOQUE
-app.get("/estoque", (req, res) => {
-res.json(estoque);
+app.listen(process.env.PORT || 3000, () => {
+    console.log("Servidor central rodando com sucesso.");
 });
-
-app.post("/estoque", (req, res) => {
-const link = req.body.link;
-
-if (!link) {
-return res.status(400).json({
-ok: false,
-erro: "link não informado"
-});
-}
-
-const existe = estoque.find(item => item.link === link);
-
-if (!existe) {
-estoque.push({
-link: link,
-data: Date.now()
-});
-}
-
-res.json({
-ok: true,
-total: estoque.length
-});
-});
-
-app.listen(process.env.PORT || 3000);
