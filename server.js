@@ -1,25 +1,19 @@
 const express = require("express");
-const { exec } = require("child_process");
 
 const app = express();
 
-app.use(express.json());
+// Aceita texto puro enviado pelo PostText do Kodular
+app.use(express.text());
 
 app.post("/video", (req, res) => {
 
-    const comando = req.body.comando;
+    const comando = req.body.trim();
 
-    exec(
-        `echo "${comando}" | bash /data/data/com.termux/files/home/estoque.sh`,
-        (erro, stdout) => {
+    console.log("Recebido:", comando);
 
-            if (erro) {
-                return res.status(500).send("erro");
-            }
+    // Teste: devolve exatamente o que recebeu
+    res.send(comando);
 
-            res.send(stdout.trim());
-        }
-    );
 });
 
 app.listen(3000, () => {
