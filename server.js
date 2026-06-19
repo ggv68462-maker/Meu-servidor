@@ -2,7 +2,6 @@ const express = require("express");
 
 const app = express();
 
-// Aceita texto puro enviado pelo PostText do Kodular
 app.use(express.text());
 
 app.post("/video", (req, res) => {
@@ -11,11 +10,14 @@ app.post("/video", (req, res) => {
 
     console.log("Recebido:", comando);
 
-    // Teste: devolve exatamente o que recebeu
-    res.send(comando);
+    if (!/^B\d+$/.test(comando)) {
+        return res.status(400).send("Comando inválido");
+    }
+
+    res.send("OK:" + comando);
 
 });
 
-app.listen(3000, () => {
+app.listen(process.env.PORT || 3000, () => {
     console.log("Servidor online");
 });
