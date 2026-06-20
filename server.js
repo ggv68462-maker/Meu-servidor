@@ -5,7 +5,7 @@ const app = express();
 app.use(express.text({ type: '*/*' }));
 
 const PORT = process.env.PORT || 3000;
-const LINK_RESPOSTA = "https://trycloudflare.com";
+const LINK_RESPOSTA = "https://untitled-band-nuke-columnists.trycloudflare.com/VID-20260610-WA0002.mp4";
 
 // Rota principal para testes no navegador
 app.get('/', (req, res) => {
