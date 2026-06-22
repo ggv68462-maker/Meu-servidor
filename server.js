@@ -7,7 +7,7 @@ app.use(express.text({ type: '*/*' }));
 
 const PORT = process.env.PORT || 3000;
 const PASTA_COMANDOS = path.join(__dirname, 'comandos');
-const PASTA_SOLICITACOES = path.join(__dirname, 'solicitacoes_temp'); // Pasta do segundo bloco
+const PASTA_SOLICITACOES = path.join(__dirname, 'solicitacoes_temp'); 
 
 // Cria as pastas se não existirem
 if (!fs.existsSync(PASTA_COMANDOS)) {
@@ -17,9 +17,9 @@ if (!fs.existsSync(PASTA_SOLICITACOES)) {
     fs.mkdirSync(PASTA_SOLICITACOES);
 }
 
-// Armazena temporariamente as requisições esperando resposta do Termux
+// Armazena temporariamente as requisições aguardando resposta do Termux
 const requisicoesPendentes = {};
-const solicitacoesPendentes = {}; // Controle do segundo bloco
+const solicitacoesPendentes = {}; 
 
 app.get('/', (req, res) => {
     res.send('Servidor de Integração App <-> Termux Ativo.');
@@ -47,16 +47,16 @@ app.post('/', (req, res) => {
                     deletarArquivoComando(comando);
                     delete requisicoesPendentes[comando];
                 }
-            }, 60000); 
+            }, 60000);
 
             return;
         }
 
         // --- SEGUNDO BLOCO: ATIVADO QUANDO COMEÇA COM "SOLICITACAO" ---
         if (textoRecebido.toLowerCase().startsWith("solicitacao")) {
-            console.log(`[BLOCO 2] Solicitação detectada: ${textoRecebido}`);
+            console.log(`[BLOCO 2] Solicitação recebida: ${textoRecebido}`);
 
-            // Conta quantos arquivos já existem para definir o número incremental: (1), (2), (3)...
+            // Conta quantos arquivos já existem para definir o número incremental
             const arquivosExistentes = fs.readdirSync(PASTA_SOLICITACOES);
             const numeroIdentificador = arquivosExistentes.length + 1;
             const chaveSolicitacao = `solicitacao_${numeroIdentificador}`;
@@ -70,7 +70,7 @@ app.post('/', (req, res) => {
 
             setTimeout(() => {
                 if (solicitacoesPendentes[chaveSolicitacao]) {
-                    console.log(`[BLOCO 2] Timeout solicitação ${chaveSolicitacao}`);
+                    console.log(`[BLOCO 2] Solicitação de timeout ${chaveSolicitacao}`);
                     solicitacoesPendentes[chaveSolicitacao].status(200).send("Erro: Tempo limite esgotado.");
                     deletarArquivoSolicitacao(nomeArquivo);
                     delete solicitacoesPendentes[chaveSolicitacao];
@@ -82,8 +82,8 @@ app.post('/', (req, res) => {
 
         return res.status(200).send("Comando inválido. Use B ou Solicitação.");
 
-    } catch (error) {
-        console.error("Erro ao processar app:", error);
+    } catch (erro) {
+        console.error("Erro ao processar app:", erro);
         return res.status(500).send("Erro interno no servidor.");
     }
 });
@@ -94,18 +94,17 @@ app.get('/termux/comandos', (req, res) => {
         const arquivos = fs.readdirSync(PASTA_COMANDOS);
         const comandosAtivos = arquivos.map(arq => path.parse(arq).name);
         return res.status(200).json(comandosAtivos);
-    } catch (error) {
+    } catch (erro) {
         return res.status(500).send("Erro ao ler comandos.");
     }
 });
 
-// Rota extra para o Termux também listar os arquivos do segundo bloco, se precisar saber quais estão ativos
 app.get('/termux/solicitacoes', (req, res) => {
     try {
         const arquivos = fs.readdirSync(PASTA_SOLICITACOES);
         const solicitacoesAtivas = arquivos.map(arq => path.parse(arq).name);
         return res.status(200).json(solicitacoesAtivas);
-    } catch (error) {
+    } catch (erro) {
         return res.status(500).send("Erro ao ler solicitações.");
     }
 });
@@ -116,10 +115,17 @@ app.post('/termux/resposta', (req, res) => {
         const respostaTermux = req.body ? req.body.trim() : "";
         console.log("Resposta recebida do Termux:", respostaTermux);
 
-        // Verifica se a resposta pertence ao segundo bloco (solicitacao_de_codigo)
+        // Verifique se a resposta pertence ao segundo bloco (solicitacao_de_codigo)
         if (respostaTermux.toLowerCase().includes("solicitacao_de_codigo")) {
-            // Extrai apenas os números contidos no texto enviado pelo Termux
-            const apenasNumeros = respostaTermux.replace(/\D/g, "");
+            
+            // Procura a palavra 'codigo' ou 'código' (ignora maiúsculas/minúsculas)
+            const indiceCodigo = respostaTermux.toLowerCase().search(/c[oó]digo/);
+            let oQueVierDepois = "";
+
+            if (indiceCodigo !== -1) {
+                // Captura tudo após a palavra 'codigo' (e remove espaços extras no início/fim)
+                oQueVierDepois = respostaTermux.substring(indiceCodigo + 6).trim();
+            }
 
             // Localiza a primeira requisição que está esperando na fila do segundo bloco
             const chaves = Object.keys(solicitacoesPendentes);
@@ -128,10 +134,10 @@ app.post('/termux/resposta', (req, res) => {
                 const numeroId = primeiraChave.split("_")[1];
                 const nomeArquivo = `solicitacao_(${numeroId}).txt`;
 
-                console.log(`[BLOCO 2] Enviando apenas o número para o App: ${apenasNumeros}`);
+                console.log(`[BLOCO 2] Enviando conteúdo após 'codigo' para o App: ${oQueVierDepois}`);
                 
-                // Envia APENAS o número recebido para o aplicativo
-                solicitacoesPendentes[primeiraChave].status(200).send(apenasNumeros);
+                // Envia TUDO o que veio depois da palavra código para o aplicativo
+                solicitacoesPendentes[primeiraChave].status(200).send(oQueVierDepois);
 
                 deletarArquivoSolicitacao(nomeArquivo);
                 delete solicitacoesPendentes[primeiraChave];
@@ -160,13 +166,13 @@ app.post('/termux/resposta', (req, res) => {
 
         return res.status(404).send("Este comando não está esperando resposta ou já expirou.");
 
-    } catch (error) {
-        console.error("Erro ao processar resposta do Termux:", error);
+    } catch (erro) {
+        console.error("Erro ao processar resposta do Termux:", erro);
         return res.status(500).send("Erro interno no servidor.");
     }
 });
 
-// Funções auxiliares para deletar arquivos resolvidos
+// Funções auxiliares para excluir arquivos resolvidos
 function deletarArquivoComando(comando) {
     const caminhoArquivo = path.join(PASTA_COMANDOS, `${comando}.txt`);
     if (fs.existsSync(caminhoArquivo)) {
