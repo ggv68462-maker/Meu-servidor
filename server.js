@@ -7,22 +7,24 @@ app.use(express.text({ type: '*/*' }));
 
 const PORT = process.env.PORT || 3000;
 const PASTA_COMANDOS = path.join(__dirname, 'comandos');
-// NOVO: Pasta isolada para as solicitações de código
-const PASTA_SOLICITACOES = path.join(__dirname, 'solicitacao_de_codigo');
+// Pasta exclusiva para as solicitações
+const PASTA_SOLICITACOES = path.join(__dirname, 'solicitação_de_codigo');
 
 // Cria a pasta "comandos" se ela não existir
 if (!fs.existsSync(PASTA_COMANDOS)) {
     fs.mkdirSync(PASTA_COMANDOS);
 }
 
-// NOVO: Cria a pasta "solicitacao_de_codigo" se ela não existir
+// Cria a pasta "solicitação_de_codigo" se ela não existir
 if (!fs.existsSync(PASTA_SOLICITACOES)) {
     fs.mkdirSync(PASTA_SOLICITACOES);
 }
 
 // Armazena temporariamente as requisições do App esperando resposta do Termux
 const requisicoesPendentes = {};
-// NOVO: Armazena temporariamente os Apps esperando o código específico por ID Ex: { "1": res, "2": res }
+
+// NOVO: Controla o próximo número da fila das solicitações e guarda os apps esperando
+let proximoIdSolicitacao = 1;
 const solicitacoesPendentes = {};
 
 app.get('/', (req, res) => {
@@ -56,62 +58,59 @@ app.post('/', (req, res) => {
             return; 
         }
 
-        // --- NOVO FLUXO: SOLICITAÇÃO DE CÓDIGO (TOTALMENTE ISOLADO) ---
-        // Identifica mensagens no formato exato: solicitação_de_codigo (X) ou solicitacao_de_codigo (X)
-        const regexSolicitacao = /^solicita[cç]ã[oõ]_de_codigo\s*\((\d+)\)$/i;
-        const matchSolicitacao = textoRecebido.match(regexSolicitacao);
+        // --- NOVO FLUXO: APP PEDINDO SOLICITAÇÃO (GERA O NÚMERO AUTOMÁTICO) ---
+        // Aceita com ou sem acento vindo do App
+        if (/^solicita[cç]ã[oõ]_de_codigo$/i.test(textoRecebido)) {
+            const idAtual = proximoIdSolicitacao++; // Pega o número atual e soma +1 para o próximo
+            const nomeArquivo = `solicitação_de_codigo (${idAtual})`;
+            
+            console.log(`Nova solicitação recebida. Gerado ID: ${idAtual}. Criando arquivo...`);
 
-        if (matchSolicitacao) {
-            const idSolicitacao = matchSolicitacao[1]; // Pega o número de dentro do ( )
-            console.log(`Nova solicitação de código detectada. ID: ${idSolicitacao}`);
+            // Cria o arquivo TXT na pasta correspondente com o número gerado pelo servidor
+            fs.writeFileSync(path.join(PASTA_SOLICITACOES, `${nomeArquivo}.txt`), "");
 
-            // Salva o arquivo na pasta exclusiva 'solicitacao_de_codigo' com o nome exato recebido
-            fs.writeFileSync(path.join(PASTA_SOLICITACOES, `${textoRecebido}.txt`), "");
+            // Guarda a conexão desse App específico vinculada a este ID único
+            solicitacoesPendentes[idAtual] = res;
 
-            // Guarda o objeto 'res' do App específico atrelado a esse ID
-            solicitacoesPendentes[idSolicitacao] = res;
-
-            // Timeout de 60s para não deixar a requisição do App travada caso o código nunca chegue
+            // Timeout de 60s para não travar o app caso o Termux não devolva o código
             setTimeout(() => {
-                if (solicitacoesPendentes[idSolicitacao]) {
-                    console.log(`Timeout: Código para solicitação ID ${idSolicitacao} não chegou.`);
-                    solicitacoesPendentes[idSolicitacao].status(200).send("Erro: Tempo limite do código esgotado.");
-                    deletarArquivoSolicitacao(textoRecebido);
-                    delete solicitacoesPendentes[idSolicitacao];
+                if (solicitacoesPendentes[idAtual]) {
+                    console.log(`Timeout: Código para solicitação (${idAtual}) não chegou.`);
+                    solicitacoesPendentes[idAtual].status(200).send("Erro: Tempo limite esgotado.");
+                    deletarArquivoSolicitacao(nomeArquivo);
+                    delete solicitacoesPendentes[idAtual];
                 }
             }, 60000);
 
-            return;
+            return; // Aguarda o Termux responder para enviar o dado pro App
         }
 
-        // --- NOVO FLUXO: RECEBIMENTO DO CÓDIGO (TOTALMENTE ISOLADO) ---
-        // Identifica mensagens no formato: solicitação_de_codigo (X) NUMERO_DO_CODIGO
+        // --- NOVO FLUXO: TERMUX ENTREGANDO O CÓDIGO ---
+        // Identifica o padrão: "solicitação_de_codigo (X) NUMERO"
         const regexCodigoEntregue = /^solicita[cç]ã[oõ]_de_codigo\s*\((\d+)\)\s+(.+)$/i;
         const matchCodigo = textoRecebido.match(regexCodigoEntregue);
 
         if (matchCodigo) {
-            const idSolicitacao = matchCodigo[1]; // Número identificador (X)
-            const codigoExtraido = matchCodigo[2].trim(); // Apenas o número/texto final (ex: 828282828)
+            const idSolicitacao = parseInt(matchCodigo[1]); // Extrai o número de dentro do ( )
+            const codigoExtraido = matchCodigo[2].trim();   // Pega apenas o código final
 
             if (solicitacoesPendentes[idSolicitacao]) {
                 console.log(`Entregando código para a solicitação (${idSolicitacao}): ${codigoExtraido}`);
 
-                // Devolve APENAS o código puro para o App correto que pediu lá atrás
+                // Retorna apenas o código gerado para o app exato que pediu
                 solicitacoesPendentes[idSolicitacao].status(200).send(codigoExtraido);
 
-                // Limpa os arquivos e remove da lista de pendências
+                // Limpa o arquivo gerado e remove da memória do servidor
                 const nomeArquivoOriginal = `solicitação_de_codigo (${idSolicitacao})`;
                 deletarArquivoSolicitacao(nomeArquivoOriginal);
-                deletarArquivoSolicitacao(`solicitacao_de_codigo (${idSolicitacao})`); // Garante a remoção se salvou sem acento
                 delete solicitacoesPendentes[idSolicitacao];
 
-                return res.status(200).send("Código repassado ao app correspondente com sucesso.");
+                return res.status(200).send("Código repassado com sucesso.");
             }
 
-            return res.status(404).send("Esta solicitação de código não existe ou já expirou.");
+            return res.status(404).send("Esta solicitação não existe ou já expirou.");
         }
 
-        // Se não cair em nenhuma das regras acima:
         return res.status(200).send("Comando inválido.");
 
     } catch (error) {
@@ -131,7 +130,7 @@ app.get('/termux/comandos', (req, res) => {
     }
 });
 
-// NOVO: ROTA EXTRA CASO O TERMUX QUEIRA VER AS SOLICITAÇÕES DE CÓDIGO ATIVAS ISOLADAMENTE
+// NOVO: ROTA PARA O TERMUX LER OS ARQUIVOS DA NOVA PASTA DE SOLICITAÇÕES
 app.get('/termux/solicitacoes', (req, res) => {
     try {
         const arquivos = fs.readdirSync(PASTA_SOLICITACOES);
@@ -180,7 +179,7 @@ function deletarArquivoComando(comando) {
     }
 }
 
-// NOVO: Função auxiliar para deletar o arquivo de solicitação resolvido
+// NOVO: Função auxiliar para deletar o arquivo da pasta de solicitações
 function deletarArquivoSolicitacao(nomeArquivo) {
     const caminhoArquivo = path.join(PASTA_SOLICITACOES, `${nomeArquivo}.txt`);
     if (fs.existsSync(caminhoArquivo)) {
