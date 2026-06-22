@@ -3,68 +3,40 @@ const fs = require('fs');
 const path = require('path');
 const app = express();
 
-// Configuração original para ler qualquer tipo de texto enviado pelo app
 app.use(express.text({ type: '*/*' }));
 
 const PORT = process.env.PORT || 3000;
 const PASTA_COMANDOS = path.join(__dirname, 'comandos');
+// NOVO: Pasta isolada para as solicitações de código
+const PASTA_SOLICITACOES = path.join(__dirname, 'solicitacao_de_codigo');
 
 // Cria a pasta "comandos" se ela não existir
 if (!fs.existsSync(PASTA_COMANDOS)) {
     fs.mkdirSync(PASTA_COMANDOS);
 }
 
-// Armazena temporariamente as requisições do App esperando resposta do Termux (Original)
-const requisicoesPendentes = {};
+// NOVO: Cria a pasta "solicitacao_de_codigo" se ela não existir
+if (!fs.existsSync(PASTA_SOLICITACOES)) {
+    fs.mkdirSync(PASTA_SOLICITACOES);
+}
 
-// Contador global para dar o número (1), (2), (3) para as solicitações sem repetir
-let contadorFila = 1;
+// Armazena temporariamente as requisições do App esperando resposta do Termux
+const requisicoesPendentes = {};
+// NOVO: Armazena temporariamente os Apps esperando o código específico por ID Ex: { "1": res, "2": res }
+const solicitacoesPendentes = {};
 
 app.get('/', (req, res) => {
-    res.send('Servidor de Integração App <-> Termux Ativo com Fila de Códigos.');
+    res.send('Servidor de Integração App <-> Termux Ativo.');
 });
 
-// 1. ROTA PRINCIPAL QUE O APP (KODULAR) ACESSA VIA POST (UNIFICADA)
+// 1. ROTA QUE O APP (KODULAR) ACESSA VIA POST
 app.post('/', (req, res) => {
     try {
         const textoRecebido = req.body ? req.body.trim() : "";
         console.log("Texto recebido do app:", textoRecebido);
 
-        // ==========================================
-        // NOVA FUNÇÃO: SOLICITAÇÃO DE CÓDIGO (NOVATOS)
-        // ==========================================
-        if (textoRecebido.includes('solicitacao_de_codigo')) {
-            const numeroIdentificacao = contadorFila;
-            contadorFila++; // Garante que o próximo ID será diferente (1, 2, 3...)
-
-            // Cria o identificador único para o Termux entender quem é (Ex: solicitacao_de_codigo(1))
-            const chaveIdentificadora = `solicitacao_de_codigo(${numeroIdentificacao})`;
-            console.log(`[Nova Fila] Criando solicitação: ${chaveIdentificadora}. Salvando na pasta...`);
-
-            // Salva na mesma pasta 'comandos' para o seu Termux ler de forma padronizada (Ex: comandos/solicitacao_de_codigo(1).txt)
-            fs.writeFileSync(path.join(PASTA_COMANDOS, `${chaveIdentificadora}.txt`), "");
-
-            // Segura o usuário novato na espera da resposta específica dele
-            requisicoesPendentes[chaveIdentificadora] = res;
-
-            // Timeout de segurança de 60 segundos para não travar o app do novato
-            setTimeout(() => {
-                if (requisicoesPendentes[chaveIdentificadora]) {
-                    console.log(`Timeout: Termux não gerou o código para ${chaveIdentificadora}`);
-                    requisicoesPendentes[chaveIdentificadora].status(200).send("Erro: Tempo limite esgotado.");
-                    deletarArquivoComando(chaveIdentificadora);
-                    delete requisicoesPendentes[chaveIdentificadora];
-                }
-            }, 60000);
-
-            return; // Aguarda a resposta do Termux
-        }
-
-        // ==========================================
-        // SUA FUNÇÃO ORIGINAL: COMANDOS B1, B2...
-        // ==========================================
+        // --- FLUXO ORIGINAL DO COMANDO B (TOTALMENTE INTACTO) ---
         const regexComando = /^B\d+/i;
-        
         if (regexComando.test(textoRecebido)) {
             const comando = textoRecebido.toUpperCase();
             console.log(`Comando válido detectado: ${comando}. Salvando na pasta...`);
@@ -84,7 +56,63 @@ app.post('/', (req, res) => {
             return; 
         }
 
-        return res.status(200).send("Comando inválido. Use B seguido de número ou solicitação de código.");
+        // --- NOVO FLUXO: SOLICITAÇÃO DE CÓDIGO (TOTALMENTE ISOLADO) ---
+        // Identifica mensagens no formato exato: solicitação_de_codigo (X) ou solicitacao_de_codigo (X)
+        const regexSolicitacao = /^solicita[cç]ã[oõ]_de_codigo\s*\((\d+)\)$/i;
+        const matchSolicitacao = textoRecebido.match(regexSolicitacao);
+
+        if (matchSolicitacao) {
+            const idSolicitacao = matchSolicitacao[1]; // Pega o número de dentro do ( )
+            console.log(`Nova solicitação de código detectada. ID: ${idSolicitacao}`);
+
+            // Salva o arquivo na pasta exclusiva 'solicitacao_de_codigo' com o nome exato recebido
+            fs.writeFileSync(path.join(PASTA_SOLICITACOES, `${textoRecebido}.txt`), "");
+
+            // Guarda o objeto 'res' do App específico atrelado a esse ID
+            solicitacoesPendentes[idSolicitacao] = res;
+
+            // Timeout de 60s para não deixar a requisição do App travada caso o código nunca chegue
+            setTimeout(() => {
+                if (solicitacoesPendentes[idSolicitacao]) {
+                    console.log(`Timeout: Código para solicitação ID ${idSolicitacao} não chegou.`);
+                    solicitacoesPendentes[idSolicitacao].status(200).send("Erro: Tempo limite do código esgotado.");
+                    deletarArquivoSolicitacao(textoRecebido);
+                    delete solicitacoesPendentes[idSolicitacao];
+                }
+            }, 60000);
+
+            return;
+        }
+
+        // --- NOVO FLUXO: RECEBIMENTO DO CÓDIGO (TOTALMENTE ISOLADO) ---
+        // Identifica mensagens no formato: solicitação_de_codigo (X) NUMERO_DO_CODIGO
+        const regexCodigoEntregue = /^solicita[cç]ã[oõ]_de_codigo\s*\((\d+)\)\s+(.+)$/i;
+        const matchCodigo = textoRecebido.match(regexCodigoEntregue);
+
+        if (matchCodigo) {
+            const idSolicitacao = matchCodigo[1]; // Número identificador (X)
+            const codigoExtraido = matchCodigo[2].trim(); // Apenas o número/texto final (ex: 828282828)
+
+            if (solicitacoesPendentes[idSolicitacao]) {
+                console.log(`Entregando código para a solicitação (${idSolicitacao}): ${codigoExtraido}`);
+
+                // Devolve APENAS o código puro para o App correto que pediu lá atrás
+                solicitacoesPendentes[idSolicitacao].status(200).send(codigoExtraido);
+
+                // Limpa os arquivos e remove da lista de pendências
+                const nomeArquivoOriginal = `solicitação_de_codigo (${idSolicitacao})`;
+                deletarArquivoSolicitacao(nomeArquivoOriginal);
+                deletarArquivoSolicitacao(`solicitacao_de_codigo (${idSolicitacao})`); // Garante a remoção se salvou sem acento
+                delete solicitacoesPendentes[idSolicitacao];
+
+                return res.status(200).send("Código repassado ao app correspondente com sucesso.");
+            }
+
+            return res.status(404).send("Esta solicitação de código não existe ou já expirou.");
+        }
+
+        // Se não cair em nenhuma das regras acima:
+        return res.status(200).send("Comando inválido.");
 
     } catch (error) {
         console.error("Erro ao processar app:", error);
@@ -92,7 +120,7 @@ app.post('/', (req, res) => {
     }
 });
 
-// 2. ROTA PARA O TERMUX VER OS COMANDOS PENDENTES (Original - Agora lista os "B" e as "solicitações")
+// 2. ROTA PARA O TERMUX VER OS COMANDOS PENDENTES (TOTALMENTE INTACTO)
 app.get('/termux/comandos', (req, res) => {
     try {
         const arquivos = fs.readdirSync(PASTA_COMANDOS);
@@ -103,41 +131,33 @@ app.get('/termux/comandos', (req, res) => {
     }
 });
 
-// 3. ROTA PARA O TERMUX DEVOLVER A RESPOSTA (UNIFICADA COM LIMPEZA DE TEXTO)
+// NOVO: ROTA EXTRA CASO O TERMUX QUEIRA VER AS SOLICITAÇÕES DE CÓDIGO ATIVAS ISOLADAMENTE
+app.get('/termux/solicitacoes', (req, res) => {
+    try {
+        const arquivos = fs.readdirSync(PASTA_SOLICITACOES);
+        const solicitacoesAtivas = arquivos.map(arq => path.parse(arq).name);
+        return res.status(200).json(solicitacoesAtivas);
+    } catch (error) {
+        return res.status(500).send("Erro ao ler solicitações.");
+    }
+});
+
+// 3. ROTA PARA O TERMUX DEVOLVER A RESPOSTA DO COMANDO B (TOTALMENTE INTACTO)
 app.post('/termux/resposta', (req, res) => {
     try {
         const respostaTermux = req.body ? req.body.trim() : "";
         console.log("Resposta recebida do Termux:", respostaTermux);
 
-        // Separa o cabeçalho (Ex: B1 ou solicitacao_de_codigo(1)) do restante da resposta
         const partes = respostaTermux.split(" ");
-        const comandoBruto = partes[0];
+        const comando = partes[0].toUpperCase();
         
-        // Se a resposta vier do sistema novo de códigos, tratamos o nome da chave
-        let comando = comandoBruto.includes('solicitacao_de_codigo') ? comandoBruto : comandoBruto.toUpperCase();
-        
-        // Pega tudo o que o Termux escreveu depois da chave identificadora
-        let mensagemParaOApp = partes.slice(1).join(" ");
+        const mensagemParaOApp = partes.slice(1).join(" ");
 
         if (requisicoesPendentes[comando]) {
+            console.log(`Enviando para o App a resposta do comando ${comando}: ${mensagemParaOApp}`);
             
-            // Tratamento especial que você pediu para a solicitação de código:
-            if (comando.includes('solicitacao_de_codigo')) {
-                console.log(`[Nova Fila] Tratando resposta recebida: ${respostaTermux}`);
-                
-                // Limpa parênteses, o número de identificação e as letras, isolando apenas o código gerado final
-                // Exemplo: se o Termux responder "solicitacao_de_codigo(1) 1882828282", ele filtra e vira apenas "1882828282"
-                mensagemParaOApp = respostaTermux.replace(/solicitacao_de_codigo\s*\(\d+\)\s*/g, '').trim();
-                
-                console.log(`[Nova Fila] Enviando para o App apenas o número limpo: ${mensagemParaOApp}`);
-            } else {
-                console.log(`[Original] Enviando para o App a resposta do comando ${comando}: ${mensagemParaOApp}`);
-            }
-            
-            // Envia a resposta final filtrada de volta para o Kodular
             requisicoesPendentes[comando].status(200).send(mensagemParaOApp);
             
-            // Limpa a pasta e a memória do servidor
             deletarArquivoComando(comando);
             delete requisicoesPendentes[comando];
 
@@ -152,9 +172,17 @@ app.post('/termux/resposta', (req, res) => {
     }
 });
 
-// Função auxiliar para deletar o arquivo de comando resolvido (Original)
+// Função auxiliar para deletar o arquivo de comando resolvido (TOTALMENTE INTACTO)
 function deletarArquivoComando(comando) {
     const caminhoArquivo = path.join(PASTA_COMANDOS, `${comando}.txt`);
+    if (fs.existsSync(caminhoArquivo)) {
+        fs.unlinkSync(caminhoArquivo);
+    }
+}
+
+// NOVO: Função auxiliar para deletar o arquivo de solicitação resolvido
+function deletarArquivoSolicitacao(nomeArquivo) {
+    const caminhoArquivo = path.join(PASTA_SOLICITACOES, `${nomeArquivo}.txt`);
     if (fs.existsSync(caminhoArquivo)) {
         fs.unlinkSync(caminhoArquivo);
     }
