@@ -1,0 +1,71 @@
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const app = express();
+
+// Configura o servidor para conseguir ler o texto que o Kodular envia
+app.use(express.text());
+app.use(express.urlencoded({ extended: true }));
+
+// Cria a pasta "solicitação_de_codigo" automaticamente se ela não existir
+const pastaSolicitacoes = path.join(__dirname, 'solicitação_de_codigo');
+if (!fs.existsSync(pastaSolicitacoes)) {
+    fs.mkdirSync(pastaSolicitacoes);
+}
+
+// Contador global para dar o número (1), (2), (3) para cada pessoa sem repetir
+let contadorFila = 1;
+
+// Rota principal onde o seu Kodular vai bater
+app.post('/', (req, res) => {
+    // Pega o texto que veio do Kodular (ex: comando=solicitacao_de_codigo)
+    const corpoTexto = req.body;
+
+    if (corpoTexto.includes('solicitacao_de_codigo')) {
+        // 1. Define o número da vez para separar os usuários
+        const numeroIdentificacao = contadorFila;
+        contadorFila++; // Aumenta o contador para o próximo não ser igual
+
+        const nomeArquivo = `solicitação_de_codigo(${numeroIdentificacao}).txt`;
+        const caminhoArquivo = path.join(pastaSolicitacoes, nomeArquivo);
+
+        // 2. Cria o arquivo na pasta para o Termux saber que tem trabalho
+        fs.writeFileSync(caminhoArquivo, `Aguardando código para o usuário ${numeroIdentificacao}`);
+
+        console.log(`[Servidor] Nova pasta/arquivo criado: ${nomeArquivo}`);
+
+        // --- SIMULAÇÃO DO TERMUX TRABALHANDO ---
+        // Aqui vamos simular que o Termux processou e devolveu exatamente como você exemplificou:
+        // "solicitação_de_codigo (1) 1882828282"
+        setTimeout(() => {
+            // Gerando um número aleatório simulando o código do Termux
+            const codigoGeradoPeloTermux = Math.floor(1000000000 + Math.random() * 9000000000); 
+            const respostaDoTermux = `solicitação_de_codigo (${numeroIdentificacao}) ${codigoGeradoPeloTermux}`;
+
+            console.log(`[Termux Devolveu]: ${respostaDoTermux}`);
+
+            // 3. LIMPEZA TOTAL (Sua regra: apaga letras, apaga () e deixa só o código final)
+            // Esse comando limpa tudo o que não for o número grande do final
+            const apenasONumeroPuro = respostaDoTermux.replace(/solicitação_de_codigo\s*\(\d+\)\s*/g, '').trim();
+
+            // 4. Devolve APENAS o número puro para o Kodular
+            res.send(apenasONumeroPuro);
+
+            // 5. Apaga o arquivo da pasta porque o processo desse usuário já terminou
+            if (fs.existsSync(caminhoArquivo)) {
+                fs.unlinkSync(caminhoArquivo);
+                console.log(`[Servidor] Arquivo ${nomeArquivo} processado e deletado.`);
+            }
+
+        }, 3000); // Simula uma espera de 3 segundos pro Termux gerar o código
+    } else {
+        res.status(400).send("Comando inválido recebido pelo servidor.");
+    }
+});
+
+// Inicia o servidor na porta do Render
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Servidor rodando e aguardando o Kodular na porta ${PORT}`);
+});
+
