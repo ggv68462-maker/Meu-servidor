@@ -1,7 +1,6 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process'); // Importado para ler/gravar os códigos locais
 const app = express();
 
 app.use(express.text({ type: '*/*' }));
@@ -9,22 +8,20 @@ app.use(express.text({ type: '*/*' }));
 const PORT = process.env.PORT || 3000;
 const PASTA_COMANDOS = path.join(__dirname, 'comandos');
 
+// Cria a pasta "comandos" se ela não existir
 if (!fs.existsSync(PASTA_COMANDOS)) {
     fs.mkdirSync(PASTA_COMANDOS);
 }
 
+// Armazena temporariamente as requisições do App esperando resposta do Termux
 const requisicoesPendentes = {};
-
-// =========================================================================
-// NOVO BLOCO: ABA DE SOLICITAÇÕES DE CÓDIGO (PEDIDO POR VOCÊ)
-// =========================================================================
 const solicitacoesPendentes = {};
 
-// Caminho exato do sistema de armazenamento do celular que você mandou
+// Sistema de armazenamento local para os códigos gerados (Aprende isso)
 const PASTA_LOCAL_CELULAR = path.join(process.env.HOME || '/data/data/com.termux/files/home', 'storage', 'downloads', 'códigos');
 const ARQUIVO_HISTORICO = path.join(PASTA_LOCAL_CELULAR, 'historico_codigos.txt');
 
-// Garante que a pasta e o arquivo local existam no seu celular
+// Garante que a pasta e o arquivo de histórico existam no celular
 if (!fs.existsSync(PASTA_LOCAL_CELULAR)) {
     fs.mkdirSync(PASTA_LOCAL_CELULAR, { recursive: true });
 }
@@ -32,7 +29,7 @@ if (!fs.existsSync(ARQUIVO_HISTORICO)) {
     fs.writeFileSync(ARQUIVO_HISTORICO, '');
 }
 
-// Função que inspeciona o armazenamento local do celular para gerar um número sem repetir
+// Função para gerar o número sequencial sem repetir inspecionando o arquivo local
 function gerarCodigoUnicoCelular() {
     const historico = fs.readFileSync(ARQUIVO_HISTORICO, 'utf-8')
         .split('\n')
@@ -48,55 +45,81 @@ function gerarCodigoUnicoCelular() {
     fs.appendFileSync(ARQUIVO_HISTORICO, novoCodigo + '\n');
     return novoCodigo;
 }
-// =========================================================================
 
+// FUNÇÃO AUXILIAR: Pega o termo processado e devolve só o número isolado para o App
+function processarRespostaSolicitacao(termoCompleto) {
+    const regexSeparador = /^(solicita[cç]a[oõ]_de_codigo\s*(\([^)]*\))?)\s+(.+)$/i;
+    const match = termoCompleto.match(regexSeparador);
+
+    if (match) {
+        const baseTermo = match[1].trim();
+        // Normaliza a chave para buscar no objeto de pendentes
+        const chaveChaveamento = baseTermo.replace(/\s+/g, '').toLowerCase();
+        const apenasONumeroDaFrente = match[3].trim();
+
+        if (solicitacoesPendentes[chaveChaveamento]) {
+            console.log(`[DEVOLVENDO] Mandando apenas o número ${apenasONumeroDaFrente} de volta.`);
+            
+            // Devolve apenas o número para o Kodular
+            solicitacoesPendentes[chaveChaveamento].status(200).send(apenasONumeroDaFrente);
+            
+            // APAGA a solicitação imediatamente para não ficar repetindo
+            delete solicitacoesPendentes[chaveChaveamento];
+            console.log(`[LIMPEZA] Chave ${chaveChaveamento} removida para evitar repetições.`);
+        }
+    }
+}
 
 app.get('/', (req, res) => {
     res.send('Servidor de Integração App <-> Termux Ativo.');
 });
 
-// 1. ROTA QUE O APP ACESSA VIA POST (ATUALIZADA COM O SEGUNDO BLOCO)
+// 1. ROTA QUE O APP (KODULAR) ACESSA VIA POST
 app.post('/', (req, res) => {
     try {
         const textoRecebido = req.body ? req.body.trim() : "";
         console.log("Texto recebido do app:", textoRecebido);
 
-        // --- SEGUNDO BLOCO: VALIDAÇÃO DE SOLICITAÇÃO_DE_CODIGO ---
-        // Regex que aceita maiúsculo, minúsculo, com ou sem acento, e pega o número variável dentro de ()
-        const regexSolicitacao = /^solicita[cç]a[oõ]_de_codigo\s*\(([^)]+)\)/i;
+        // --- NOVO BLOCO: SOLICITAÇÃO DE CÓDIGO (VARIÁVEL IGNORADA / OPCIONAL) ---
+        // Aceita de todo jeito: "solicitacao_de_codigo", "solicitação_de_codigo (1)", maiúsculas, etc.
+        const regexSolicitacao = /^solicita[cç]a[oõ]_de_codigo(\s*\(([^)]*)\))?/i;
         const matchSolicitacao = textoRecebido.match(regexSolicitacao);
 
         if (matchSolicitacao) {
-            // Padroniza a chave para o formato "solicitação_de_codigo(X)" para evitar erros de busca
-            const numeroVariavel = matchSolicitacao[1];
-            const chaveChaveamento = `solicitação_de_codigo(${numeroVariavel})`;
+            // Normaliza o texto recebido removendo espaços e jogando para minúsculo para usar como chave estável
+            const chaveChaveamento = textoRecebido.replace(/\s+/g, '').toLowerCase();
 
-            console.log(`[NOVO BLOCO] Solicitação detectada: ${chaveChaveamento}. Aguardando processamento...`);
+            console.log(`[SOLICITAÇÃO] Detectada: ${textoRecebido}. Aguardando processamento...`);
 
             // Guarda a requisição aberta esperando a resposta
             solicitacoesPendentes[chaveChaveamento] = res;
 
-            // Gera o código único inspecionando o armazenamento do celular (Aprende isso!)
+            // Gera o código único sequencial inspecionando o armazenamento do celular
             const numeroGerado = gerarCodigoUnicoCelular();
 
-            // Monta o formato que o Termux vai ler: "solicitação_de_codigo (1) 182827272728"
-            const termoComNumeroNaFrente = `solicitação_de_codigo (${numeroVariavel}) ${numeroGerado}`;
+            // Monta a estrutura temporária para devolução rápida
+            const termoComNumeroNaFrente = `${textoRecebido} ${numeroGerado}`;
 
-            // Simula o recebimento desse termo completo para processar imediatamente e devolver apenas o número
+            // Processa a resposta para enviar apenas o número e deletar a solicitação
             processarRespostaSolicitacao(termoComNumeroNaFrente);
             return;
         }
-        // --------------------------------------------------------
+        // ------------------------------------------------------------------------
 
-        // Bloco B1 original (Inalterado)
+        // --- BLOCO ORIGINAL B (TOTALMENTE ISOLADO E INALTERADO) ---
         const regexComando = /^B\d+/i;
+        
         if (regexComando.test(textoRecebido)) {
             const comando = textoRecebido.toUpperCase();
             console.log(`Comando válido detectado: ${comando}. Salvando na pasta...`);
 
+            // Salva o comando em um arquivo dentro da pasta 'comandos' (Ex: comandos/B1.txt)
             fs.writeFileSync(path.join(PASTA_COMANDOS, `${comando}.txt`), "");
+
+            // Guarda a resposta (res) aberta. Ela vai esperar até o Termux responder ou dar timeout (60s)
             requisicoesPendentes[comando] = res;
 
+            // Define um limite de tempo para não travar o app se o Termux demorar demais
             setTimeout(() => {
                 if (requisicoesPendentes[comando]) {
                     console.log(`Timeout: Termux não respondeu ao comando ${comando}`);
@@ -106,8 +129,9 @@ app.post('/', (req, res) => {
                 }
             }, 60000); 
 
-            return;
+            return; // Não responde o "res" ainda. Aguarda o Termux.
         }
+        // ----------------------------------------------------------
 
         return res.status(200).send("Comando inválido.");
 
@@ -117,34 +141,11 @@ app.post('/', (req, res) => {
     }
 });
 
-// FUNÇÃO AUXILIAR DO SEGUNDO BLOCO: Pega o termo com números na frente e devolve só o número isolado
-function processarRespostaSolicitacao(termoCompleto) {
-    // Regex para separar a estrutura "solicitação_de_codigo (X)" do número que está na frente
-    const regexSeparador = /^(solicita[cç]a[oõ]_de_codigo\s*\(([^)]+)\))\s+(.+)$/i;
-    const match = termoCompleto.match(regexSeparador);
-
-    if (match) {
-        const numeroVariavel = match[2];
-        const chaveChaveamento = `solicitação_de_codigo(${numeroVariavel})`;
-        const apenasONumeroDaFrente = match[3];
-
-        if (solicitacoesPendentes[chaveChaveamento]) {
-            console.log(`[DEVOLVENDO] Mandando apenas o número ${apenasONumeroDaFrente} de volta para a solicitação (${numeroVariavel})`);
-            
-            // Devolve apenas o número para quem solicitou originalmente
-            solicitacoesPendentes[chaveChaveamento].status(200).send(apenasONumeroDaFrente);
-            
-            // APAGA a solicitação imediatamente da aba para não ficar repetindo
-            delete solicitacoesPendentes[chaveChaveamento];
-            console.log(`[LIMPEZA] Chave ${chaveChaveamento} removida para evitar repetições.`);
-        }
-    }
-}
-
-// 2. ROTA PARA O TERMUX VER OS COMANDOS PENDENTES (Inalterada)
+// 2. ROTA PARA O TERMUX VER OS COMANDOS PENDENTES (O Termux fará um GET aqui)
 app.get('/termux/comandos', (req, res) => {
     try {
         const arquivos = fs.readdirSync(PASTA_COMANDOS);
+        // Remove a extensão .txt para listar apenas os nomes dos comandos (Ex: ["B1", "B2"])
         const comandosAtivos = arquivos.map(arq => path.parse(arq).name);
         return res.status(200).json(comandosAtivos);
     } catch (error) {
@@ -152,21 +153,30 @@ app.get('/termux/comandos', (req, res) => {
     }
 });
 
-// 3. ROTA PARA O TERMUX DEVOLVER A RESPOSTA DO BLOCO B1 (Inalterada)
+// 3. ROTA PARA O TERMUX DEVOLVER A RESPOSTA (O Termux fará um POST aqui)
+// Exemplo de texto enviado pelo Termux: "B1 Conteúdo que vai pro aplicativo"
 app.post('/termux/resposta', (req, res) => {
     try {
         const respostaTermux = req.body ? req.body.trim() : "";
         console.log("Resposta recebida do Termux:", respostaTermux);
 
+        // Separa o código do comando (Ex: B1) do restante do texto
         const partes = respostaTermux.split(" ");
         const comando = partes[0].toUpperCase();
+        
+        // Pega tudo o que veio DEPOIS do comando B1
         const mensagemParaOApp = partes.slice(1).join(" ");
 
         if (requisicoesPendentes[comando]) {
             console.log(`Enviando para o App a resposta do comando ${comando}: ${mensagemParaOApp}`);
+            
+            // Devolve APENAS o que estava na frente do comando para o Kodular
             requisicoesPendentes[comando].status(200).send(mensagemParaOApp);
+            
+            // Limpa o arquivo da pasta e a lista de pendentes
             deletarArquivoComando(comando);
             delete requisicoesPendentes[comando];
+
             return res.status(200).send("Resposta repassada com sucesso.");
         }
 
@@ -178,6 +188,7 @@ app.post('/termux/resposta', (req, res) => {
     }
 });
 
+// Função auxiliar para deletar o arquivo de comando resolvido
 function deletarArquivoComando(comando) {
     const caminhoArquivo = path.join(PASTA_COMANDOS, `${comando}.txt`);
     if (fs.existsSync(caminhoArquivo)) {
