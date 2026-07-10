@@ -7,9 +7,8 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Permite receber dados binários brutos imensos (Fotos/Vídeos) enviados pelo Kodular
-app.use(express.raw({ type: 'image/*' }));
-app.use(express.raw({ type: 'video/*' }));
+// Aceita QUALQUER tipo de estilo de mídia e arquivo binário puro enviado pelo Kodular
+app.use(express.raw({ type: '*/*' }));
 app.use(express.text({ type: 'text/*' }));
 
 const PORT = process.env.PORT || 3000;
@@ -23,7 +22,6 @@ if (!fs.existsSync(PASTA_SOLICITACOES)) fs.mkdirSync(PASTA_SOLICITACOES);
 if (!fs.existsSync(PASTA_MIDIAS)) fs.mkdirSync(PASTA_MIDIAS);
 
 // --- NOVA LINHA: PERMITE VER A FOTO/VÍDEO PELO NAVEGADOR ---
-// Se você digitar: https://onrender.com ele abre na tela!
 app.use('/ver_midia', express.static(PASTA_MIDIAS));
 
 const requisicoesPendentes = {};
@@ -33,8 +31,8 @@ app.get('/', (req, res) => {
     res.send('Servidor de Integração App <-> Termux Ativo.');
 });
 
-// 1. ROTA QUE O APP (KODULAR) ACESSA VIA POST
-app.post('/', (req, res) => {
+// 1. ROTA ALTERADA PARA APP.ALL PARA ACEITAR O MÉTODO PUT DO KODULAR
+app.all('/', (req, res) => {
     try {
         // --- CAPTURA E MOSTRA OS DADOS VINDOS DA URL (?dados=) ---
         const dadosDoApp = req.query.dados ? req.query.dados.trim() : "";
@@ -44,17 +42,25 @@ app.post('/', (req, res) => {
         console.log("CONTEÚDO DECODIFICADO:", dadosDoApp);
         console.log("-----------------------------------------");
 
-        // --- SALVA O ARQUIVO DE FOTO/VÍDEO QUE VEIO NO CORPO (BODY) ---
+        // --- SALVA O ARQUIVO DE QUALQUER MÍDIA QUE VEIO NO CORPO (BODY) ---
         let veioVideo = false;
         let veioFoto = false;
         if (Buffer.isBuffer(req.body) && req.body.length > 0) {
             const contentType = req.headers['content-type'] || '';
-            const ehVideo = contentType.includes('video');
-            const extensao = ehVideo ? 'mp4' : 'jpg';
+            
+            // Detecta dinamicamente a extensão real da mídia enviada
+            let extensao = 'bin';
+            if (contentType.includes('/')) {
+                extensao = contentType.split('/')[1];
+            } else if (contentType.includes('video')) {
+                extensao = 'mp4';
+            } else if (contentType.includes('image')) {
+                extensao = 'jpg';
+            }
 
-            if (ehVideo) {
+            if (contentType.includes('video')) {
                 veioVideo = true; 
-            } else {
+            } else if (contentType.includes('image')) {
                 veioFoto = true;
             }
 
