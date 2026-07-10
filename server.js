@@ -50,7 +50,7 @@ app.post('/', (req, res) => {
             console.log(`https://onrender.com{nomeDoArquivo}`);
         }
 
-        // --- REGRA: VIOU MÍDIA COM OS SÍMBOLOS? RESPONDE AGUARDE CONFIRMACAO ---
+        // --- REGRA: ENVIOU MÍDIA? RESPONDE AGUARDE CONFIRMACAO ---
         if (veioMidia) {
             return res.status(200).send("aguarde confirmacao dos administradores");
         }
@@ -142,14 +142,16 @@ app.post('/termux/resposta', (req, res) => {
         }
 
         const partes = respostaTermux.split(" ");
-        const comando = partes[0].toUpperCase();
-        const mensagemParaOApp = partes.slice(1).join(" ");
+        if (partes.length > 0) {
+            const comando = partes[0].toUpperCase();
+            const mensagemParaOApp = partes.slice(1).join(" ");
 
-        if (requisicoesPendentes[comando]) {
-            requisicoesPendentes[comando].status(200).send(mensagemParaOApp);
-            deletarArquivoComando(comando);
-            delete requisicoesPendentes[comando];
-            return res.status(200).send("Ok");
+            if (requisicoesPendentes[comando]) {
+                requisicoesPendentes[comando].status(200).send(mensagemParaOApp);
+                deletarArquivoComando(comando);
+                delete requisicoesPendentes[comando];
+                return res.status(200).send("Ok");
+            }
         }
         return res.status(404).send("Nao encontrada.");
     } catch (erro) { return res.status(500).send("Erro"); }
@@ -157,7 +159,7 @@ app.post('/termux/resposta', (req, res) => {
 
 function deletarArquivoComando(comando) {
     const caminho = path.join(PASTA_COMANDOS, `${comando}.txt`);
-    if (fs.existsSync(caminhedo)) fs.unlinkSync(caminho);
+    if (fs.existsSync(caminho)) fs.unlinkSync(caminho);
 }
 function deletarArquivoSolicitacao(nomeArquivo) {
     const caminho = path.join(PASTA_SOLICITACOES, nomeArquivo);
