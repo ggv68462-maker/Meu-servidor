@@ -31,7 +31,10 @@ app.post('/', (req, res) => {
         const textoRecebido = req.body ? req.body.trim() : "";
         console.log("Texto recebido do app:", textoRecebido);
 
+
+        // =========================================================================
         // --- PRIMEIRO BLOCO: ATIVADO QUANDO COMEÇA COM "B" ---
+        // =========================================================================
         const regexComandoB = /^B\d+/i;
         if (regexComandoB.test(textoRecebido)) {
             const comando = textoRecebido.toUpperCase();
@@ -49,10 +52,13 @@ app.post('/', (req, res) => {
                 }
             }, 60000);
 
-            return;
+            return; // Impede que passe para os blocos de baixo
         }
 
+
+        // =========================================================================
         // --- SEGUNDO BLOCO: ATIVADO QUANDO COMEÇA COM "SOLICITACAO" ---
+        // =========================================================================
         if (textoRecebido.toLowerCase().startsWith("solicitacao")) {
             console.log(`[BLOCO 2] Solicitação recebida: ${textoRecebido}`);
 
@@ -77,10 +83,18 @@ app.post('/', (req, res) => {
                 }
             }, 60000);
 
-            return;
+            return; // Impede que passe para os blocos de baixo
         }
 
-        return res.status(200).send("Comando inválido. Use B ou Solicitação.");
+
+        // =========================================================================
+        // --- COLE O SEU BLOCO 3 AQUI EMBAIXO QUANDO QUISER ---
+        // =========================================================================
+        // Exemplo: se (textoRecebido.includes("#")) { ... seu código ... return; }
+
+
+        // --- RESPOSTA PADRÃO SE NENHUM BLOCO ACIMA FOR ATIVADO ---
+        return res.status(200).send("Comando inválido. Nenhum bloco correspondente encontrado.");
 
     } catch (erro) {
         console.error("Erro ao processar app:", erro);
