@@ -31,8 +31,8 @@ app.get('/', (req, res) => {
     res.send('Servidor de Integração App <-> Termux Ativo.');
 });
 
-// 1. ROTA QUE O APP (KODULAR) ACESSA VIA POST
-app.post('/', (req, res) => {
+// 1. ROTA QUE O APP (KODULAR) ACESSA - ALTERADO PARA ALL PARA ACEITAR POST, PUT, ETC.
+app.all('/', (req, res) => {
     try {
         // --- CAPTURA E MOSTRA OS DADOS VINDOS DA URL (?dados=) ---
         const dadosDoApp = req.query.dados ? req.query.dados.trim() : "";
@@ -53,7 +53,7 @@ app.post('/', (req, res) => {
             if (contentType.includes('video')) extensao = 'mp4';
             else if (contentType.includes('image')) extensao = 'jpg';
             else if (contentType.includes('audio')) extensao = 'mp3';
-            else if (contentType.includes('/')) extensao = contentType.split('/')[1];
+            else if (contentType.includes('/')) extensao = contentType.split('/');
 
             // Cria um nome fixo baseado no horário atual para o arquivo
             const nomeDoArquivo = `midia_${Date.now()}.${extensao}`; 
@@ -170,8 +170,8 @@ app.post('/termux/resposta', (req, res) => {
 
             const chaves = Object.keys(solicitacoesPendentes);
             if (chaves.length > 0) {
-                const primeiraChave = chaves[0]; 
-                const numeroId = primeiraChave.split("_")[1];
+                const primeiraChave = chaves; 
+                const numeroId = primeiraChave.split("_");
                 const nomeArquivo = `solicitacao_(${numeroId}).txt`;
 
                 console.log(`[BLOCO 2] Enviando conteúdo para o App: ${oQueVierDepois}`);
@@ -187,7 +187,7 @@ app.post('/termux/resposta', (req, res) => {
         }
 
         const partes = respostaTermux.split(" ");
-        const comando = partes[0].toUpperCase(); 
+        const comando = partes.toUpperCase(); 
         const mensagemParaOApp = partes.slice(1).join(" ");
 
         if (requisicoesPendentes[comando]) {
