@@ -3,11 +3,11 @@ const fs = require('fs');
 const path = require('path');
 const app = express();
 
-// --- CONFIGURAÇÃO DE CAPACIDADE MÁXIMA REMOVIDA (SEM LIMITES) ---
+// --- CONFIGURAÇÃO DE CAPACIDADE MÁXIMA PARA MÍDIAS PESADAS (SEM LIMITES DE TAMANHO) ---
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Aceita QUALQUER tipo de estilo de mídia e arquivo binário puro enviado pelo Kodular
+// Permite receber dados binários brutos de QUALQUER tipo de mídia/arquivo enviado no corpo da requisição
 app.use(express.raw({ type: '*/*' }));
 app.use(express.text({ type: 'text/*' }));
 
@@ -21,7 +21,7 @@ if (!fs.existsSync(PASTA_COMANDOS)) fs.mkdirSync(PASTA_COMANDOS);
 if (!fs.existsSync(PASTA_SOLICITACOES)) fs.mkdirSync(PASTA_SOLICITACOES);
 if (!fs.existsSync(PASTA_MIDIAS)) fs.mkdirSync(PASTA_MIDIAS);
 
-// --- NOVA LINHA: PERMITE VER A FOTO/VÍDEO PELO NAVEGADOR ---
+// --- PERMITE VER A FOTO/VÍDEO PELO NAVEGADOR ---
 app.use('/ver_midia', express.static(PASTA_MIDIAS));
 
 const requisicoesPendentes = {};
@@ -31,8 +31,8 @@ app.get('/', (req, res) => {
     res.send('Servidor de Integração App <-> Termux Ativo.');
 });
 
-// 1. ROTA ALTERADA PARA APP.ALL PARA ACEITAR O MÉTODO PUT DO KODULAR
-app.all('/', (req, res) => {
+// 1. ROTA QUE O APP (KODULAR) ACESSA VIA POST
+app.post('/', (req, res) => {
     try {
         // --- CAPTURA E MOSTRA OS DADOS VINDOS DA URL (?dados=) ---
         const dadosDoApp = req.query.dados ? req.query.dados.trim() : "";
@@ -42,27 +42,18 @@ app.all('/', (req, res) => {
         console.log("CONTEÚDO DECODIFICADO:", dadosDoApp);
         console.log("-----------------------------------------");
 
-        // --- SALVA O ARQUIVO DE QUALQUER MÍDIA QUE VEIO NO CORPO (BODY) ---
-        let veioVideo = false;
-        let veioFoto = false;
+        // --- SALVA O ARQUIVO DE MÍDIA QUE VEIO NO CORPO (BODY) ---
+        let veioMidia = false;
         if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+            veioMidia = true;
             const contentType = req.headers['content-type'] || '';
             
-            // Detecta dinamicamente a extensão real da mídia enviada
+            // Tenta descobrir a extensão pelo Content-Type, senão usa 'bin'
             let extensao = 'bin';
-            if (contentType.includes('/')) {
-                extensao = contentType.split('/')[1];
-            } else if (contentType.includes('video')) {
-                extensao = 'mp4';
-            } else if (contentType.includes('image')) {
-                extensao = 'jpg';
-            }
-
-            if (contentType.includes('video')) {
-                veioVideo = true; 
-            } else if (contentType.includes('image')) {
-                veioFoto = true;
-            }
+            if (contentType.includes('video')) extensao = 'mp4';
+            else if (contentType.includes('image')) extensao = 'jpg';
+            else if (contentType.includes('audio')) extensao = 'mp3';
+            else if (contentType.includes('/')) extensao = contentType.split('/')[1];
 
             // Cria um nome fixo baseado no horário atual para o arquivo
             const nomeDoArquivo = `midia_${Date.now()}.${extensao}`; 
@@ -75,15 +66,9 @@ app.all('/', (req, res) => {
             console.log("-----------------------------------------");
         }
 
-        // --- REGRA DO VÍDEO ---
-        if (veioVideo) {
-            console.log("[REGRA] Vídeo detectado. Respondendo mensagem de permissão para o App.");
-            return res.status(200).send("aguardando permissão do ADM");
-        }
-
-        // --- REGRA DA FOTO ---
-        if (veioFoto) {
-            console.log("[REGRA] Foto detectada. Respondendo mensagem de permissão para o App.");
+        // --- REGRA DA MÍDIA (FOTO, VÍDEO, AUDIO, ETC) ---
+        if (veioMidia) {
+            console.log("[REGRA] Mídia detectada. Respondendo mensagem de permissão para o App.");
             return res.status(200).send("aguardando permissão do ADM");
         }
 
@@ -93,7 +78,7 @@ app.all('/', (req, res) => {
             return res.status(200).send("cyp");
         }
 
-        // --- LÓGICA ANTIGA DE VALIDAÇÃO (CASO NÃO SEJA VÍDEO NEM A1) ---
+        // --- LÓGICA ANTIGA DE VALIDAÇÃO (CASO NÃO SEJA MÍDIA NEM A1) ---
         const textoRecebido = dadosDoApp;
 
         const regexComandoB = /^B\d+/i;
