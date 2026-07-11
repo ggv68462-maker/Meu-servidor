@@ -10,16 +10,21 @@ const app = express();
 app.use(express.text({ type: '*/*' }));
 
 const PORT = process.env.PORT || 3000;
+
 const PASTA_COMANDOS = path.join(__dirname, 'comandos');
 
-const TELEGRAM_TOKEN = "SEU_TOKEN_AQUI";
+const TELEGRAM_TOKEN = "8938158627:AAFDHHbxf52DPtcKVgN3240O_kIoEnVPiLs";
 const TELEGRAM_CHAT_ID = "8880569466";
 
+
 const upload = multer({
-    dest: "uploads/"
+    dest: "uploads/",
+    limits: {
+        fileSize: Infinity
+    }
 });
 
-// Cria pastas
+
 if (!fs.existsSync(PASTA_COMANDOS)) {
     fs.mkdirSync(PASTA_COMANDOS);
 }
@@ -29,172 +34,159 @@ if (!fs.existsSync("uploads")) {
 }
 
 
-// Requisições esperando resposta
 const requisicoesPendentes = {};
 
 
-// Página inicial
-app.get('/', (req, res) => {
-    res.send('Servidor de Integração App <-> Termux Ativo.');
-});
 
-
-// ===============================
-// KODULAR MANDA COMANDO
-// ===============================
-
-app.post('/', (req, res) => {
-
-    try {
-
-        const textoRecebido = req.body ? req.body.trim() : "";
-
-        console.log("Recebido:", textoRecebido);
-
-
-        const regexComando = /^B\d+/i;
-
-
-        if (regexComando.test(textoRecebido)) {
-
-            const comando = textoRecebido.toUpperCase();
-
-
-            fs.writeFileSync(
-                path.join(PASTA_COMANDOS, `${comando}.txt`),
-                ""
-            );
-
-
-            requisicoesPendentes[comando] = res;
-
-
-            setTimeout(() => {
-
-                if (requisicoesPendentes[comando]) {
-
-                    requisicoesPendentes[comando]
-                    .status(200)
-                    .send("Erro: timeout");
-
-
-                    deletarArquivoComando(comando);
-
-                    delete requisicoesPendentes[comando];
-
-                }
-
-            },60000);
-
-
-            return;
-
-        }
-
-
-        res.status(200)
-        .send("Comando inválido");
-
-
-    } catch(e){
-
-        console.log(e);
-
-        res.status(500)
-        .send("Erro interno");
-
-    }
-
+app.get('/', (req,res)=>{
+    res.send("Servidor ativo.");
 });
 
 
 
+// KODULAR ENVIA COMANDO
 
-// ===============================
+app.post('/', (req,res)=>{
+
+try {
+
+const textoRecebido = req.body ? req.body.trim() : "";
+
+console.log("Recebido:", textoRecebido);
+
+
+const regex = /^B\d+/i;
+
+
+if(regex.test(textoRecebido)){
+
+
+const comando = textoRecebido.toUpperCase();
+
+
+fs.writeFileSync(
+path.join(PASTA_COMANDOS, comando+".txt"),
+""
+);
+
+
+requisicoesPendentes[comando] = res;
+
+
+
+setTimeout(()=>{
+
+if(requisicoesPendentes[comando]){
+
+requisicoesPendentes[comando]
+.status(200)
+.send("Tempo esgotado");
+
+
+deletarArquivoComando(comando);
+
+delete requisicoesPendentes[comando];
+
+}
+
+},60000);
+
+
+return;
+
+}
+
+
+res.send("Comando inválido");
+
+
+}catch(e){
+
+console.log(e);
+res.status(500).send("Erro");
+
+}
+
+});
+
+
+
+
 // TERMUX PEGA COMANDOS
-// ===============================
 
 app.get('/termux/comandos',(req,res)=>{
 
-    try{
+try{
 
-        const arquivos =
-        fs.readdirSync(PASTA_COMANDOS);
-
-
-        const comandos =
-        arquivos.map(a=>path.parse(a).name);
+const arquivos =
+fs.readdirSync(PASTA_COMANDOS);
 
 
-        res.json(comandos);
+const lista =
+arquivos.map(a=>path.parse(a).name);
 
 
-    }catch(e){
+res.json(lista);
 
-        res.status(500)
-        .send("Erro");
 
-    }
+}catch(e){
+
+res.status(500).send("Erro");
+
+}
 
 });
 
 
 
 
-// ===============================
 // TERMUX DEVOLVE RESPOSTA
-// ===============================
 
 app.post('/termux/resposta',(req,res)=>{
 
-    try{
-
-        const resposta =
-        req.body.trim();
+try{
 
 
-        const partes =
-        resposta.split(" ");
+const texto = req.body.trim();
 
 
-        const comando =
-        partes[0].toUpperCase();
+const partes = texto.split(" ");
 
 
-        const mensagem =
-        partes.slice(1).join(" ");
+const comando = partes[0].toUpperCase();
+
+
+const mensagem = partes.slice(1).join(" ");
 
 
 
-        if(requisicoesPendentes[comando]){
+if(requisicoesPendentes[comando]){
 
 
-            requisicoesPendentes[comando]
-            .status(200)
-            .send(mensagem);
+requisicoesPendentes[comando]
+.status(200)
+.send(mensagem);
 
 
-
-            deletarArquivoComando(comando);
-
-            delete requisicoesPendentes[comando];
+deletarArquivoComando(comando);
 
 
-            return res.send("OK");
-
-        }
+delete requisicoesPendentes[comando];
 
 
-        res.status(404)
-        .send("Comando não encontrado");
+return res.send("OK");
+
+}
 
 
-    }catch(e){
+res.status(404).send("Não encontrado");
 
-        res.status(500)
-        .send("Erro");
 
-    }
+}catch(e){
+
+res.status(500).send("Erro");
+
+}
 
 });
 
@@ -202,84 +194,103 @@ app.post('/termux/resposta',(req,res)=>{
 
 
 
-// ===============================
-// RECEBE VIDEO E MANDA TELEGRAM
-// ===============================
+// RECEBE QUALQUER MÍDIA E MANDA TELEGRAM
 
-app.post(
-'/telegram/video',
-upload.single('video'),
+app.post('/telegram/media',
+upload.single('media'),
 async(req,res)=>{
 
 
 try{
 
 
-    if(!req.file){
-
-        return res
-        .status(400)
-        .send("Nenhum vídeo");
-
-    }
+console.log("Arquivo recebido:", req.file);
 
 
 
-    const form = new FormData();
+if(!req.file){
+
+return res
+.status(400)
+.send("Nenhum arquivo");
+
+}
 
 
 
-    form.append(
-        "chat_id",
-        TELEGRAM_CHAT_ID
-    );
-
-
-    form.append(
-        "document",
-        fs.createReadStream(req.file.path)
-    );
+const form = new FormData();
 
 
 
-    await axios.post(
-
-        `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument`,
-
-        form,
-
-        {
-            headers:
-            form.getHeaders()
-        }
-
-    );
+form.append(
+"chat_id",
+TELEGRAM_CHAT_ID
+);
 
 
 
-    fs.unlinkSync(req.file.path);
+form.append(
+"document",
+fs.createReadStream(req.file.path),
+{
+filename:req.file.originalname
+}
+);
 
 
 
-    res.send("Vídeo enviado");
+const resposta = await axios.post(
+
+`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument`,
+
+form,
+
+{
+
+headers:form.getHeaders(),
+
+maxContentLength:Infinity,
+
+maxBodyLength:Infinity
+
+}
+
+);
+
+
+
+console.log(
+"Telegram respondeu:",
+resposta.data
+);
+
+
+
+fs.unlinkSync(req.file.path);
+
+
+
+res.send("Arquivo enviado");
 
 
 }catch(e){
 
 
-    console.log(
-        e.response?.data || e
-    );
+console.log(
+"ERRO:",
+e.response?.data || e
+);
 
 
-    res.status(500)
-    .send("Falha no Telegram");
+
+res.status(500)
+.send("Erro Telegram");
 
 
 }
 
-
 });
+
 
 
 
@@ -287,18 +298,20 @@ try{
 
 function deletarArquivoComando(comando){
 
-    const arquivo =
-    path.join(
-        PASTA_COMANDOS,
-        `${comando}.txt`
-    );
+
+const arquivo =
+path.join(
+PASTA_COMANDOS,
+comando+".txt"
+);
 
 
-    if(fs.existsSync(arquivo)){
+if(fs.existsSync(arquivo)){
 
-        fs.unlinkSync(arquivo);
+fs.unlinkSync(arquivo);
 
-    }
+}
+
 
 }
 
@@ -307,7 +320,7 @@ function deletarArquivoComando(comando){
 app.listen(PORT,()=>{
 
 console.log(
-`Servidor rodando na porta ${PORT}`
+"Servidor rodando na porta "+PORT
 );
 
 });
