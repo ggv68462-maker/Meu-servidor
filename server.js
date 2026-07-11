@@ -1,65 +1,23 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
-const FormData = require('form-data');
-
 const app = express();
 
-// Mantém o estilo exato que você usa para aceitar qualquer entrada como texto/bruto
-app.use(express.text({ type: '*/*', limit: '100mb' }));
+app.use(express.text({ type: '*/*' }));
 
 const PORT = process.env.PORT || 3000;
 const PASTA_COMANDOS = path.join(__dirname, 'comandos');
 
+// Cria a pasta "comandos" se ela não existir
 if (!fs.existsSync(PASTA_COMANDOS)) {
     fs.mkdirSync(PASTA_COMANDOS);
 }
 
+// Armazena temporariamente as requisições do App esperando resposta do Termux
 const requisicoesPendentes = {};
 
 app.get('/', (req, res) => {
     res.send('Servidor de Integração App <-> Termux Ativo.');
-});
-
-// =========================================================================
-// ROTA MODIFICADA: ACEITA QUALQUER MÍDIA DO APP E ENVIA DIRETO PRO TELEGRAM
-// =========================================================================
-app.post('/enviar-midia', async (req, res) => {
-    try {
-        if (!req.body || req.body.length === 0) {
-            return res.status(200).send("Erro: Nenhum dado de arquivo recebido.");
-        }
-
-        const contentTypeOriginal = req.headers['content-type'] || 'application/octet-stream';
-        const nomeDoArquivo = req.headers['x-file-name'] || `midia_${Date.now()}.bin`;
-
-        // Converte o texto recebido de volta para um Buffer binário puro
-        const arquivoBuffer = Buffer.from(req.body, 'binary');
-
-        const form = new FormData();
-        form.append('chat_id', '8880569466');
-        form.append('document', arquivoBuffer, {
-            filename: nomeDoArquivo,
-            contentType: contentTypeOriginal
-        });
-
-        const urlTelegram = 'https://telegram.org';
-
-        const respostaTelegram = await axios.post(urlTelegram, form, {
-            headers: {
-                ...form.getHeaders()
-            },
-            maxContentLength: Infinity,
-            maxBodyLength: Infinity
-        });
-
-        return res.status(200).send("Sucesso: Arquivo enviado para o Telegram.");
-
-    } catch (error) {
-        console.error("Erro no envio do Telegram:", error.message);
-        return res.status(200).send(`Erro ao processar mídia: ${error.message}`);
-    }
 });
 
 // 1. ROTA QUE O APP (KODULAR) ACESSA VIA POST
@@ -68,15 +26,21 @@ app.post('/', (req, res) => {
         const textoRecebido = req.body ? req.body.trim() : "";
         console.log("Texto recebido do app:", textoRecebido);
 
+        // Expressão regular para validar qualquer comando que comece com B seguido de números (B1, B2, B10, etc)
         const regexComando = /^B\d+/i;
         
         if (regexComando.test(textoRecebido)) {
             const comando = textoRecebido.toUpperCase();
             console.log(`Comando válido detectado: ${comando}. Salvando na pasta...`);
 
+            // Salva o comando em um arquivo dentro da pasta 'comandos' (Ex: comandos/B1.txt)
+            // O conteúdo inicial do arquivo é vazio, pois o Termux vai preencher
             fs.writeFileSync(path.join(PASTA_COMANDOS, `${comando}.txt`), "");
+
+            // Guarda a resposta (res) aberta. Ela vai esperar até o Termux responder ou dar timeout (60s)
             requisicoesPendentes[comando] = res;
 
+            // Define um limite de tempo para não travar o app se o Termux demorar demais
             setTimeout(() => {
                 if (requisicoesPendentes[comando]) {
                     console.log(`Timeout: Termux não respondeu ao comando ${comando}`);
@@ -86,7 +50,7 @@ app.post('/', (req, res) => {
                 }
             }, 60000); 
 
-            return; 
+            return; // Não responde o "res" ainda. Aguarda o Termux.
         }
 
         return res.status(200).send("Comando inválido. Use B seguido de um número.");
@@ -97,10 +61,11 @@ app.post('/', (req, res) => {
     }
 });
 
-// 2. ROTA PARA O TERMUX VER OS COMANDOS PENDENTES
+// 2. ROTA PARA O TERMUX VER OS COMANDOS PENDENTES (O Termux fará um GET aqui)
 app.get('/termux/comandos', (req, res) => {
     try {
         const arquivos = fs.readdirSync(PASTA_COMANDOS);
+        // Remove a extensão .txt para listar apenas os nomes dos comandos (Ex: ["B1", "B2"])
         const comandosAtivos = arquivos.map(arq => path.parse(arq).name);
         return res.status(200).json(comandosAtivos);
     } catch (error) {
@@ -108,21 +73,27 @@ app.get('/termux/comandos', (req, res) => {
     }
 });
 
-// 3. ROTA PARA O TERMUX DEVOLVER A RESPOSTA (Corrigida!)
+// 3. ROTA PARA O TERMUX DEVOLVER A RESPOSTA (O Termux fará um POST aqui)
+// Exemplo de texto enviado pelo Termux: "B1 Conteúdo que vai pro aplicativo"
 app.post('/termux/resposta', (req, res) => {
     try {
         const respostaTermux = req.body ? req.body.trim() : "";
         console.log("Resposta recebida do Termux:", respostaTermux);
 
+        // Separa o código do comando (Ex: B1) do restante do texto
         const partes = respostaTermux.split(" ");
-        const comando = partes[0].toUpperCase(); // Correção aplicada aqui!
+        const comando = partes[0].toUpperCase();
+        
+        // Pega tudo o que veio DEPOIS do comando B1
         const mensagemParaOApp = partes.slice(1).join(" ");
 
         if (requisicoesPendentes[comando]) {
             console.log(`Enviando para o App a resposta do comando ${comando}: ${mensagemParaOApp}`);
             
+            // Devolve APENAS o que estava na frente do comando para o Kodular
             requisicoesPendentes[comando].status(200).send(mensagemParaOApp);
             
+            // Limpa o arquivo da pasta e a lista de pendentes
             deletarArquivoComando(comando);
             delete requisicoesPendentes[comando];
 
@@ -137,6 +108,7 @@ app.post('/termux/resposta', (req, res) => {
     }
 });
 
+// Função auxiliar para deletar o arquivo de comando resolvido
 function deletarArquivoComando(comando) {
     const caminhoArquivo = path.join(PASTA_COMANDOS, `${comando}.txt`);
     if (fs.existsSync(caminhoArquivo)) {
