@@ -1,159 +1,313 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-// Importações necessárias para a nova rota do Telegram
+const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
 
 const app = express();
 
-app.use(express.text({ type: '*/*', limit: '100mb' }));
+app.use(express.text({ type: '*/*' }));
 
 const PORT = process.env.PORT || 3000;
 const PASTA_COMANDOS = path.join(__dirname, 'comandos');
 
-// Cria a pasta "comandos" se ela não existir
+const TELEGRAM_TOKEN = "SEU_TOKEN_AQUI";
+const TELEGRAM_CHAT_ID = "8880569466";
+
+const upload = multer({
+    dest: "uploads/"
+});
+
+// Cria pastas
 if (!fs.existsSync(PASTA_COMANDOS)) {
     fs.mkdirSync(PASTA_COMANDOS);
 }
 
-// Armazena temporariamente as requisições do App esperando resposta do Termux
+if (!fs.existsSync("uploads")) {
+    fs.mkdirSync("uploads");
+}
+
+
+// Requisições esperando resposta
 const requisicoesPendentes = {};
 
+
+// Página inicial
 app.get('/', (req, res) => {
     res.send('Servidor de Integração App <-> Termux Ativo.');
 });
 
-// 1. ROTA QUE O APP (KODULAR) ACESSA VIA POST
+
+// ===============================
+// KODULAR MANDA COMANDO
+// ===============================
+
 app.post('/', (req, res) => {
+
     try {
+
         const textoRecebido = req.body ? req.body.trim() : "";
-        console.log("Texto recebido do app:", textoRecebido);
 
-        // Expressão regular para validar qualquer comando que comece com B seguido de números (B1, B2, B10, etc)
+        console.log("Recebido:", textoRecebido);
+
+
         const regexComando = /^B\d+/i;
-        
+
+
         if (regexComando.test(textoRecebido)) {
+
             const comando = textoRecebido.toUpperCase();
-            console.log(`Comando válido detectado: ${comando}. Salvando na pasta...`);
 
-            // Salva o comando em um arquivo dentro da pasta 'comandos' (Ex: comandos/B1.txt)
-            // O conteúdo inicial do arquivo é vazio, pois o Termux vai preencher
-            fs.writeFileSync(path.join(PASTA_COMANDOS, `${comando}.txt`), "");
 
-            // Guarda a resposta (res) aberta. Ela vai esperar até o Termux responder ou dar timeout (60s)
+            fs.writeFileSync(
+                path.join(PASTA_COMANDOS, `${comando}.txt`),
+                ""
+            );
+
+
             requisicoesPendentes[comando] = res;
 
-            // Define um limite de tempo para não travar o app se o Termux demorar demais
-            setTimeout(() => {
-                if (requisicoesPendentes[comando]) {
-                    console.log(`Timeout: Termux não respondeu ao comando ${comando}`);
-                    requisicoesPendentes[comando].status(200).send("Erro: Tempo limite esgotado.");
-                    deletarArquivoComando(comando);
-                    delete requisicoesPendentes[comando];
-                }
-            }, 60000); 
 
-            return; // Não responde o "res" ainda. Aguarda o Termux.
+            setTimeout(() => {
+
+                if (requisicoesPendentes[comando]) {
+
+                    requisicoesPendentes[comando]
+                    .status(200)
+                    .send("Erro: timeout");
+
+
+                    deletarArquivoComando(comando);
+
+                    delete requisicoesPendentes[comando];
+
+                }
+
+            },60000);
+
+
+            return;
+
         }
 
-        return res.status(200).send("Comando inválido. Use B seguido de um número.");
 
-    } catch (error) {
-        console.error("Erro ao processar app:", error);
-        return res.status(500).send("Erro interno no servidor.");
+        res.status(200)
+        .send("Comando inválido");
+
+
+    } catch(e){
+
+        console.log(e);
+
+        res.status(500)
+        .send("Erro interno");
+
     }
+
 });
 
-// 2. ROTA PARA O TERMUX VER OS COMANDOS PENDENTES (O Termux fará um GET aqui)
-app.get('/termux/comandos', (req, res) => {
-    try {
-        const arquivos = fs.readdirSync(PASTA_COMANDOS);
-        // Remove a extensão .txt para listar apenas os nomes dos comandos (Ex: ["B1", "B2"])
-        const comandosAtivos = arquivos.map(arq => path.parse(arq).name);
-        return res.status(200).json(comandosAtivos);
-    } catch (error) {
-        return res.status(500).send("Erro ao ler comandos.");
+
+
+
+// ===============================
+// TERMUX PEGA COMANDOS
+// ===============================
+
+app.get('/termux/comandos',(req,res)=>{
+
+    try{
+
+        const arquivos =
+        fs.readdirSync(PASTA_COMANDOS);
+
+
+        const comandos =
+        arquivos.map(a=>path.parse(a).name);
+
+
+        res.json(comandos);
+
+
+    }catch(e){
+
+        res.status(500)
+        .send("Erro");
+
     }
+
 });
 
-// 3. ROTA PARA O TERMUX DEVOLVER A RESPOSTA (O Termux fará um POST aqui)
-// Exemplo de texto enviado pelo Termux: "B1 Conteúdo que vai pro aplicativo"
-app.post('/termux/resposta', (req, res) => {
-    try {
-        const respostaTermux = req.body ? req.body.trim() : "";
-        console.log("Resposta recebida do Termux:", respostaTermux);
 
-        // Separa o código do comando (Ex: B1) do restante do texto
-        const partes = respostaTermux.split(" ");
-        const comando = partes[0].toUpperCase();
-        
-        // Pega tudo o que veio DEPOIS do comando B1
-        const mensagemParaOApp = partes.slice(1).join(" ");
 
-        if (requisicoesPendentes[comando]) {
-            console.log(`Enviando para o App a resposta do comando ${comando}: ${mensagemParaOApp}`);
-            
-            // Devolve APENAS o que estava na frente do comando para o Kodular
-            requisicoesPendentes[comando].status(200).send(mensagemParaOApp);
-            
-            // Limpa o arquivo da pasta e a lista de pendentes
+
+// ===============================
+// TERMUX DEVOLVE RESPOSTA
+// ===============================
+
+app.post('/termux/resposta',(req,res)=>{
+
+    try{
+
+        const resposta =
+        req.body.trim();
+
+
+        const partes =
+        resposta.split(" ");
+
+
+        const comando =
+        partes[0].toUpperCase();
+
+
+        const mensagem =
+        partes.slice(1).join(" ");
+
+
+
+        if(requisicoesPendentes[comando]){
+
+
+            requisicoesPendentes[comando]
+            .status(200)
+            .send(mensagem);
+
+
+
             deletarArquivoComando(comando);
+
             delete requisicoesPendentes[comando];
 
-            return res.status(200).send("Resposta repassada com sucesso.");
+
+            return res.send("OK");
+
         }
 
-        return res.status(404).send("Este comando não está esperando resposta ou já expirou.");
 
-    } catch (error) {
-        console.error("Erro ao processar resposta do Termux:", error);
-        return res.status(500).send("Erro interno no servidor.");
+        res.status(404)
+        .send("Comando não encontrado");
+
+
+    }catch(e){
+
+        res.status(500)
+        .send("Erro");
+
     }
+
 });
 
-// =========================================================================
-// ROTA ADICIONADA: PROCESSA E ENVIA QUALQUER POSTFILE PARA O TELEGRAM AS CEGAS
-// =========================================================================
-app.post('/enviar-midia', async (req, res) => {
-    try {
-        if (!req.body || req.body.length === 0) {
-            return res.status(200).send("Erro: Nenhum dado de arquivo recebido.");
+
+
+
+
+// ===============================
+// RECEBE VIDEO E MANDA TELEGRAM
+// ===============================
+
+app.post(
+'/telegram/video',
+upload.single('video'),
+async(req,res)=>{
+
+
+try{
+
+
+    if(!req.file){
+
+        return res
+        .status(400)
+        .send("Nenhum vídeo");
+
+    }
+
+
+
+    const form = new FormData();
+
+
+
+    form.append(
+        "chat_id",
+        TELEGRAM_CHAT_ID
+    );
+
+
+    form.append(
+        "document",
+        fs.createReadStream(req.file.path)
+    );
+
+
+
+    await axios.post(
+
+        `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument`,
+
+        form,
+
+        {
+            headers:
+            form.getHeaders()
         }
 
-        // Reconstrói com segurança os bytes crus a partir da string fornecida pelo middleware
-        const arquivoBuffer = Buffer.from(req.body, 'binary');
+    );
 
-        const form = new FormData();
-        form.append('chat_id', '8880569466');
-        form.append('document', arquivoBuffer, {
-            filename: `midia_${Date.now()}.bin`,
-            contentType: 'application/octet-stream'
-        });
 
-        const urlTelegram = 'https://telegram.org';
 
-        await axios.post(urlTelegram, form, {
-            headers: { ...form.getHeaders() },
-            maxContentLength: Infinity,
-            maxBodyLength: Infinity
-        });
+    fs.unlinkSync(req.file.path);
 
-        return res.status(200).send("Sucesso: Enviado ao Telegram.");
-    } catch (error) {
-        console.error("Erro Telegram:", error.message);
-        return res.status(200).send(`Erro: ${error.message}`);
-    }
-});
 
-// Função auxiliar para deletar o arquivo de comando resolvido
-function deletarArquivoComando(comando) {
-    const caminhoArquivo = path.join(PASTA_COMANDOS, `${comando}.txt`);
-    if (fs.existsSync(caminhoArquivo)) {
-        fs.unlinkSync(caminhoArquivo);
-    }
+
+    res.send("Vídeo enviado");
+
+
+}catch(e){
+
+
+    console.log(
+        e.response?.data || e
+    );
+
+
+    res.status(500)
+    .send("Falha no Telegram");
+
+
 }
 
-app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+
+});
+
+
+
+
+
+function deletarArquivoComando(comando){
+
+    const arquivo =
+    path.join(
+        PASTA_COMANDOS,
+        `${comando}.txt`
+    );
+
+
+    if(fs.existsSync(arquivo)){
+
+        fs.unlinkSync(arquivo);
+
+    }
+
+}
+
+
+
+app.listen(PORT,()=>{
+
+console.log(
+`Servidor rodando na porta ${PORT}`
+);
+
 });
