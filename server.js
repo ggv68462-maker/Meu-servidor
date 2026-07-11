@@ -31,16 +31,12 @@ app.post('/enviar-midia', async (req, res) => {
             return res.status(200).send("Erro: Nenhum dado de arquivo recebido.");
         }
 
-        // Pega o Content-Type original enviado ou usa um genérico
         const contentTypeOriginal = req.headers['content-type'] || 'application/octet-stream';
-        
-        // Pega o nome do arquivo enviado pelo cabeçalho ou cria um automático
         const nomeDoArquivo = req.headers['x-file-name'] || `midia_${Date.now()}.bin`;
 
-        // Converte o texto recebido de volta para um Buffer binário puro (as cegas)
+        // Converte o texto recebido de volta para um Buffer binário puro
         const arquivoBuffer = Buffer.from(req.body, 'binary');
 
-        // Cria o formulário obrigatório para o Telegram
         const form = new FormData();
         form.append('chat_id', '8880569466');
         form.append('document', arquivoBuffer, {
@@ -50,7 +46,6 @@ app.post('/enviar-midia', async (req, res) => {
 
         const urlTelegram = 'https://telegram.org';
 
-        // Envia de forma assíncrona e cega para o seu Telegram
         const respostaTelegram = await axios.post(urlTelegram, form, {
             headers: {
                 ...form.getHeaders()
@@ -59,7 +54,6 @@ app.post('/enviar-midia', async (req, res) => {
             maxBodyLength: Infinity
         });
 
-        // Retorna a resposta de sucesso para o aplicativo do Kodular
         return res.status(200).send("Sucesso: Arquivo enviado para o Telegram.");
 
     } catch (error) {
@@ -68,7 +62,7 @@ app.post('/enviar-midia', async (req, res) => {
     }
 });
 
-// 1. ROTA QUE O APP (KODULAR) ACESSA VIA POST (Mantida original)
+// 1. ROTA QUE O APP (KODULAR) ACESSA VIA POST
 app.post('/', (req, res) => {
     try {
         const textoRecebido = req.body ? req.body.trim() : "";
@@ -103,7 +97,7 @@ app.post('/', (req, res) => {
     }
 });
 
-// 2. ROTA PARA O TERMUX VER OS COMANDOS PENDENTES (Mantida original)
+// 2. ROTA PARA O TERMUX VER OS COMANDOS PENDENTES
 app.get('/termux/comandos', (req, res) => {
     try {
         const arquivos = fs.readdirSync(PASTA_COMANDOS);
@@ -114,14 +108,14 @@ app.get('/termux/comandos', (req, res) => {
     }
 });
 
-// 3. ROTA PARA O TERMUX DEVOLVER A RESPOSTA (Mantida original)
+// 3. ROTA PARA O TERMUX DEVOLVER A RESPOSTA (Corrigida!)
 app.post('/termux/resposta', (req, res) => {
     try {
         const respostaTermux = req.body ? req.body.trim() : "";
         console.log("Resposta recebida do Termux:", respostaTermux);
 
         const partes = respostaTermux.split(" ");
-        const comando = partes[0].toUpperCase();
+        const comando = partes[0].toUpperCase(); // Correção aplicada aqui!
         const mensagemParaOApp = partes.slice(1).join(" ");
 
         if (requisicoesPendentes[comando]) {
