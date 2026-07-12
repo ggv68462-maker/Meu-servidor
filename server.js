@@ -2,71 +2,46 @@ const express = require("express");
 
 const app = express();
 
-// aceita textos grandes (Base64)
-app.use(express.json({ limit: "500mb" }));
+app.use(express.text({ limit: "500mb" }));
 
-let armazenamento = null;
+let caixaTemporaria = "";
 
-// Receber e guardar o texto
+// Recebe qualquer texto
 app.post("/guardar", (req, res) => {
-    const texto = req.body.texto;
+    caixaTemporaria = req.body;
 
-    if (!texto) {
-        return res.status(400).send("Texto vazio");
-    }
+    console.log("Recebido:", caixaTemporaria.length, "caracteres");
 
-    armazenamento = texto;
-
-    console.log("Texto armazenado:", texto.length, "caracteres");
-
-    res.send("OK - texto guardado");
+    res.send("guardado");
 });
 
 
-// Termux pega o texto
+// Termux pega
 app.get("/pegar", (req, res) => {
-
-    if (armazenamento === null) {
-        return res.status(404).send("Nenhum texto disponível");
+    if (caixaTemporaria === "") {
+        return res.send("vazio");
     }
 
-    res.send(armazenamento);
+    res.send(caixaTemporaria);
 });
 
 
-// Confirmar recebimento e apagar
-app.post("/confirmar", (req, res) => {
+// Apaga
+app.get("/apagar", (req, res) => {
+    caixaTemporaria = "";
 
-    if (req.body.status === "ok") {
+    console.log("apagado");
 
-        armazenamento = null;
-
-        console.log("Texto apagado");
-
-        return res.send("OK - apagado");
-    }
-
-    res.status(400).send("Envie status: ok");
+    res.send("ok");
 });
 
 
-// Ver se tem algo guardado
+// Ver tamanho
 app.get("/status", (req, res) => {
-
-    if (armazenamento) {
-        res.json({
-            disponivel: true,
-            tamanho: armazenamento.length
-        });
-    } else {
-        res.json({
-            disponivel: false
-        });
-    }
-
+    res.send(String(caixaTemporaria.length));
 });
 
 
 app.listen(3000, () => {
-    console.log("Servidor iniciado na porta 3000");
+    console.log("Servidor online");
 });
