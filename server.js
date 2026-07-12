@@ -6,42 +6,44 @@ app.use(express.text({ limit: "500mb" }));
 
 let caixaTemporaria = "";
 
-// Recebe qualquer texto
+// Recebe o código/texto
 app.post("/guardar", (req, res) => {
+
     caixaTemporaria = req.body;
 
-    console.log("Recebido:", caixaTemporaria.length, "caracteres");
+    console.log("========== NOVO CÓDIGO ==========");
+    console.log(caixaTemporaria);
+    console.log("=================================");
 
-    res.send("guardado");
+    res.send("Código recebido");
+
 });
 
 
-// Termux pega
+// Enviar para quem pedir
 app.get("/pegar", (req, res) => {
+
     if (caixaTemporaria === "") {
         return res.send("vazio");
     }
 
     res.send(caixaTemporaria);
+
 });
 
 
-// Apaga
+// Apagar
 app.get("/apagar", (req, res) => {
+
     caixaTemporaria = "";
 
-    console.log("apagado");
+    console.log("Código apagado");
 
     res.send("ok");
-});
 
-
-// Ver tamanho
-app.get("/status", (req, res) => {
-    res.send(String(caixaTemporaria.length));
 });
 
 
 app.listen(3000, () => {
-    console.log("Servidor online");
+    console.log("Servidor iniciado");
 });
