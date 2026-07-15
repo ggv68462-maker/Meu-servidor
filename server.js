@@ -1,47 +1,77 @@
-const express = require('express');
+const express = require("express");
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// O armazenamento temporário em memória
-let caixa = {}; 
+// Pedidos aguardando resposta
+const caixa = {};
 
-// NOVO: Se acessar /caixa, o Render entrega tudo o que está guardado nela de forma pública
-app.get('/caixa', (req, res) => {
-    res.header("Content-Type", "application/json; charset=utf-8");
-    return res.json(caixa);
-});
+// Respostas prontas para o app
+const respostas = {};
 
-// Mantém o resto do transporte bruto exatamente igual para o App e o Termux
-app.all('*', (req, res) => {
-    res.header("Content-Type", "text/plain; charset=utf-8");
+app.get("*", (req, res) => {
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
 
-    const urlCompleta = req.url;
-    const temInterrogacao = urlCompleta.indexOf('?');
+    const url = decodeURIComponent(req.url).trim();
 
-    if (temInterrogacao === -1) return res.send("");
-
-    const textoBruto = decodeURIComponent(urlCompleta.substring(temInterrogacao + 1)).trim();
-
-    const matchId = textoBruto.match(/ID=([^& \s]+)/);
-    if (!matchId) return res.send(""); 
-    
-    const id = matchId; 
-
-    let informacaoLimpa = textoBruto.replace(/ID=[^& \s]+/, '').trim();
-    if (informacaoLimpa.startsWith('&')) informacaoLimpa = informacaoLimpa.substring(1);
-
-    // FLUXO DE LEITURA (Se veio SEM informação na frente, entrega pro App e apaga)
-    if (informacaoLimpa === "") {
-        const conteudo = caixa[id] ? caixa[id] : "";
-        if (caixa[id]) {
-            delete caixa[id]; // Limpa espaço após enviar pro app correspondente
-        }
-        return res.send(conteudo); 
+    // =========================
+    // MOSTRAR A CAIXA
+    // =========================
+    if (url === "/?caixa") {
+        return res.json(caixa);
     }
 
-    // FLUXO DE ENVIO (Guarda o texto limpo associado ao ID)
-    caixa[id] = informacaoLimpa; 
-    res.send("Armazenado"); 
+    if (!url.startsWith("/?"))
+        return res.send("");
+
+    let texto = url.substring(2).trim();
+
+    texto = texto.replace(/^ID=/i, "");
+
+    const espaco = texto.indexOf(" ");
+
+    // =========================
+    // APP BUSCANDO RESPOSTA
+    // Ex.: /?ID=123
+    // =========================
+    if (espaco === -1) {
+
+        const id = texto;
+
+        if (!respostas[id])
+            return res.send("");
+
+        const resposta = respostas[id];
+
+        delete respostas[id];
+        delete caixa[id];
+
+        // O APP RECEBE APENAS ISSO
+        return res.send(resposta);
+    }
+
+    const id = texto.substring(0, espaco).trim();
+    const mensagem = texto.substring(espaco + 1).trim();
+
+    // =========================
+    // SE O ID JÁ EXISTE NA CAIXA,
+    // ISSO É UMA RESPOSTA
+    // =========================
+    if (caixa[id]) {
+
+        respostas[id] = mensagem;
+
+        return res.send("Resposta recebida");
+    }
+
+    // =========================
+    // NOVO PEDIDO DO APP
+    // =========================
+    caixa[id] = mensagem;
+
+    return res.send("Pedido armazenado");
 });
 
-app.listen(PORT, () => console.log(`Transporte rodando na porta ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Servidor iniciado na porta ${PORT}`);
+});
