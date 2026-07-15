@@ -8,38 +8,33 @@ const conexoes = {};
 
 app.get('/', (req, res) => {
     const rawUrl = req.url;
-    
     if (rawUrl.includes('?')) {
-        const chaveIdentificadora = rawUrl.split('?')[1];
-        
-        conexoes[chaveIdentificadora] = res;
-        
+        const info = rawUrl.split('?')[1];
+        conexoes[info] = res;
         setTimeout(() => {
-            if (conexoes[chaveIdentificadora]) {
-                conexoes[chaveIdentificadora].status(200).send(""); 
-                delete conexoes[chaveIdentificadora];
+            if (conexoes[info]) {
+                conexoes[info].status(200).send("");
+                delete conexoes[info];
             }
         }, 55000);
         return;
     }
-    
     res.send('Ativo');
 });
 
 app.get('/termux/pendentes', (req, res) => {
-    return res.status(200).json(Object.keys(conexoes));
+    res.status(200).json(Object.keys(conexoes));
 });
 
 app.post('/termux/resposta/:chave', (req, res) => {
-    const chaveIdentificadora = req.params.chave;
-    const linkDoVideo = req.body ? req.body.trim() : "";
-
-    if (conexoes[chaveIdentificadora]) {
-        conexoes[chaveIdentificadora].status(200).send(linkDoVideo);
-        delete conexoes[chaveIdentificadora];
+    const chave = req.params.chave;
+    const resposta = req.body ? req.body.trim() : "";
+    if (conexoes[chave]) {
+        conexoes[chave].status(200).send(resposta);
+        delete conexoes[chave];
         return res.status(200).send("Enviado");
     }
-    return res.status(404).send("Expirou");
+    res.status(404).send("Expirou");
 });
 
 app.listen(PORT, '0.0.0.0');
