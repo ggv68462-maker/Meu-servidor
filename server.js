@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const app = express();
 
-// Permite receber dados brutos em qualquer formato por precaução
+// Aceita absolutamente qualquer formato de dado no corpo se precisar
 app.use(express.raw({ type: '*/*', limit: '50mb' }));
 
 const FILE_PATH = path.join('/tmp', 'mensagens_broker.json');
@@ -22,70 +22,64 @@ function salvarBanco(dados) {
 }
 
 // =========================================================================
-// INTERCEPTADOR CENTRAL: Escuta a rota raiz (/) e trata o disparo "?ID=..."
+// INTERCEPTADOR CENTRAL: Aceita qualquer ID variável vindo do Bot no link
 // =========================================================================
 app.all('/', (req, res) => {
     let dadosBrutosUrl = "";
 
-    // Captura exatamente a string crua da URL após o caractere "?"
+    // Pega o texto bruto após o "?"
     if (req.url && req.url.includes('?')) {
-        // Divide no primeiro "?" e pega tudo o que está à direita
         dadosBrutosUrl = req.url.substring(req.url.indexOf('?') + 1);
     }
 
-    // Decodifica caracteres especiais da URL (converte %3D para =, + para espaço, etc.)
     try {
         dadosBrutosUrl = decodeURIComponent(dadosBrutosUrl.replace(/\+/g, ' '));
-    } catch (err) {
-        // Mantém o texto bruto se houver falha na conversão
-    }
+    } catch (err) {}
 
-    // Se por acaso a URL veio sem nada após o "?", tenta ler o corpo como plano B
     if (!dadosBrutosUrl && req.body) {
         dadosBrutosUrl = req.body.toString('utf8').trim();
     }
 
-    if (!dadosBrutosUrl) {
-        return res.status(400).send("Erro: Nenhuma informacao foi localizada apos o '?' na URL.");
-    }
-
-    // Procura pela estrutura ID=XXXXX usando expressão regular flexível
+    // Pega qualquer sequência de números que apareça logo após "id="
     const matchId = dadosBrutosUrl.match(/id\s*=\s*(\d+)/i);
     
     if (!matchId) {
-        console.log(`[A - ERRO] Texto capturado sem ID valido na URL: "${dadosBrutosUrl}"`);
-        return res.status(400).send("Erro: ID de usuario nao localizado na string da URL.");
+        // Se não achou nenhum ID na string, aí não tem como o transporte saber para quem entregar
+        console.log(`[A] Erro: Nao foi encontrado nenhum ID no texto recebido.`);
+        return res.status(400).send("Erro: ID nao identificado na URL.");
     }
     
-    const idCodigo = matchId[1]; // Isola apenas os números do ID capturado
+    // O ID_VARIAVEL é o número capturado da requisição atual
+    const idVariavel = matchId[1]; 
     const banco = lerBanco();
     
-    // Armazena a informação da URL de forma pública para o Termux
-    banco.filaA[idCodigo] = dadosBrutosUrl;
+    // Guarda o texto público exatamente como veio na URL para o Termux ler
+    banco.filaA[idVariavel] = dadosBrutosUrl;
     salvarBanco(banco);
     
-    console.log(`[A - SUCESSO] ID ${idCodigo} detectado na raiz. Conteudo: "${dadosBrutosUrl}"`);
+    console.log(`[Transporte] Nova mensagem na gaveta do ID: ${idVariavel}`);
     
-    // Mantém o robô aguardando a resposta do Termux (Long Polling)
+    // Segura a conexão do Niotron até o Termux responder para esta gaveta específica
     let tentativas = 0;
     const checarResposta = setInterval(() => {
         const bancoAtualizado = lerBanco();
         
-        if (bancoAtualizado.respostasB[idCodigo]) {
+        // Quando o Termux colocar uma resposta na gaveta desse ID variável, processa
+        if (bancoAtualizado.respostasB[idVariavel]) {
             clearInterval(checarResposta);
             
-            const respostaOriginalB = bancoAtualizado.respostasB[idCodigo];
+            const respostaOriginalB = bancoAtualizado.respostasB[idVariavel];
             
-            // Remove cirurgicamente a tag ID=XXXXXX da resposta fornecida pelo Termux
-            const regexLimpeza = new RegExp(`id\\s*=\\s*${idCodigo}\\s*`, 'i');
+            // Remove cirurgicamente a marcação correspondente àquele ID dinâmico
+            const regexLimpeza = new RegExp(`id\\s*=\\s*${idVariavel}\\s*`, 'i');
             const respostaLimpa = respostaOriginalB.replace(regexLimpeza, '').trim();
             
-            // Remove os registros processados para limpar o banco temporário
-            delete bancoAtualizado.filaA[idCodigo];
-            delete bancoAtualizado.respostasB[idCodigo];
+            // Limpa as gavetas desse ID específico para liberar espaço
+            delete bancoAtualizado.filaA[idVariavel];
+            delete bancoAtualizado.respostasB[idVariavel];
             salvarBanco(bancoAtualizado);
             
-            console.log(`[Render] Enviando resposta limpa de volta para o Bot: "${respostaLimpa}"`);
+            console.log(`[Transporte] Repassando info limpa para o ID ${idVariavel}`);
             return res.send(respostaLimpa);
         }
         
@@ -93,15 +87,15 @@ app.all('/', (req, res) => {
         if (tentativas > 30) { 
             clearInterval(checarResposta);
             const bancoTimeout = lerBanco();
-            delete bancoTimeout.filaA[idCodigo];
+            delete bancoTimeout.filaA[idVariavel];
             salvarBanco(bancoTimeout);
-            return res.status(504).send("Timeout: O terminal do Termux nao respondeu a tempo.");
+            return res.status(504).send("Timeout");
         }
     }, 1000);
 });
 
 // ==========================================
-// 2. TERMUX (B) - CONSOME A FILA BRUTA
+// 2. TERMUX (B) - PEGA A LISTA DE MENSAGENS
 // ==========================================
 app.get('/procurar-mensagens', (req, res) => {
     const banco = lerBanco();
@@ -110,7 +104,7 @@ app.get('/procurar-mensagens', (req, res) => {
 });
 
 // ==========================================
-// 3. TERMUX (B) - DEVOLVE A RESPOSTA BRUTA
+// 3. TERMUX (B) - DEVOLVE A RESPOSTA DO ID
 // ==========================================
 app.post('/responder-b', (req, res) => {
     let corpoB = req.body ? req.body.toString('utf8').trim() : "";
@@ -121,20 +115,22 @@ app.post('/responder-b', (req, res) => {
         }
     } catch (e) {}
 
+    // Pega o ID que o Termux incluiu na resposta para saber em qual gaveta colocar
     const matchId = corpoB.match(/id\s*=\s*(\d+)/i);
     
     if (!matchId) {
-        return res.status(400).send("Erro: Resposta do Termux sem ID valido.");
+        return res.status(400).send("Erro: Resposta sem ID informado.");
     }
     
-    const idCodigo = matchId[1];
+    const idVariavelB = matchId[1];
     const banco = lerBanco();
     
-    banco.respostasB[idCodigo] = corpoB;
+    // Armazena na gaveta do ID correto
+    banco.respostasB[idVariavelB] = corpoB;
     salvarBanco(banco);
     
     return res.send("OK");
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Servidor de Transporte na URL Raiz ativo na porta ${PORT}`));
+app.listen(PORT, () => console.log(`Broker de transporte ativo na porta ${PORT}`));
