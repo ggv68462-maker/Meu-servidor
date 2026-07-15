@@ -2,67 +2,55 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Armazenamento temporário em memória
-const mensagens = {};
+// O armazenamento se chama estritamente "caixa", exatamente como você pediu
+let caixa = {}; 
 
-// Captura tudo que entra na raiz ://meurender.com?...
-app.get('/', (req, res) => {
-    // Pega a string inteira depois do "?" da URL
-    const urlCompleta = req.url.split('?')[1];
+app.all('*', (req, res) => {
+    // Texto puro para o App Inventor receber direto sem erro 701
+    res.header("Content-Type", "text/plain; charset=utf-8");
 
-    if (!urlCompleta) {
-        return res.status(400).send('Nenhum dado enviado.');
-    }
+    const urlCompleta = req.url;
+    const temInterrogacao = urlCompleta.indexOf('?');
 
-    // Decodifica caracteres especiais da URL (ex: %20 vira espaço)
-    const dadosBrutos = decodeURIComponent(urlCompleta);
+    // Se o link vier sem nada após a interrogação, volta vazio pra não travar
+    if (temInterrogacao === -1) return res.send("");
 
-    // Se a URL contém "checar", o Termux está lendo a mensagem de A
-    if (dadosBrutos.startsWith('checar=')) {
-        const idProcurado = dadosBrutos.replace('checar=', '').trim();
-        if (mensagens[idProcurado]) {
-            return res.send(mensagens[idProcurado].msgDeA);
-        }
-        return res.send('Nenhuma mensagem.');
-    }
+    // Pega tudo que está depois do '?' de forma 100% bruta e decodifica espaços
+    const textoBruto = decodeURIComponent(urlCompleta.substring(temInterrogacao + 1)).trim();
 
-    // Se a URL contém "buscar", o Componente A está pegando a resposta final de B
-    if (dadosBrutos.startsWith('buscar=')) {
-        const idProcurado = dadosBrutos.replace('buscar=', '').trim();
-        if (mensagens[idProcurado] && mensagens[idProcurado].respostaDeB) {
-            const respostaFinal = mensagens[idProcurado].respostaDeB;
-            delete mensagens[idProcurado]; // Apaga tudo da memória imediatamente
-            return res.send(respostaFinal); // Retorna a informação pura, sem ID
-        }
-        return res.send('Aguardando...');
-    }
-
-    // Identifica o ID da mensagem (procura por "Id=" ou "id=")
-    const matchId = dadosBrutos.match(/id=(\d+)/i);
-    if (!matchId) {
-        return res.status(400).send('ID nao encontrado na URL.');
-    }
-
-    const id = matchId[1];
-
-    // Se o registro para esse ID já existe, significa que o Termux (B) está respondendo
-    if (mensagens[id]) {
-        // Remove a parte do "Id=12345" e pega apenas o texto limpo da frente
-        const textoLimpoB = dadosBrutos.replace(new RegExp(`id=${id}`, 'i'), '').trim();
-        
-        mensagens[id].respostaDeB = textoLimpoB;
-        mensagens[id].msgDeA = null; // Apaga a mensagem original de A
-        return res.send('Resposta processada.');
-    } 
+    // Captura o ID de forma dinâmica (Ex: ID=8 ou ID=A ou ID=828282)
+    const matchId = textoBruto.match(/ID=([^& \s]+)/);
+    if (!matchId) return res.send(""); // Se não enviou ID, não faz nada
     
-    // Se o registro NÃO existe, é o Componente A enviando dados novos
-    else {
-        // Armazena a string bruta exatamente como veio de A
-        mensagens[id] = { msgDeA: dadosBrutos, respostaDeB: null };
-        return res.send('Mensagem guardada.');
+    const id = matchId[1]; // Pega o código do ID (ex: "828282")
+
+    // Pega APENAS a informação que está na frente do ID e dos números/letras
+    // Remove "ID=codigo" e qualquer espaço ou caractere grudado na frente
+    let informacaoLimpa = textoBruto.replace(/ID=[^& \s]+/, '').trim();
+    if (informacaoLimpa.startsWith('&')) informacaoLimpa = informacaoLimpa.substring(1);
+
+    // ==========================================
+    // FLUXO DE LEITURA (Se veio SEM informação na frente, quer ler o que está guardado)
+    // Exemplo: ://
+    // ==========================================
+    if (informacaoLimpa === "") {
+        const conteudo = caixa[id] ? caixa[id] : "";
+        
+        // Se o conteúdo já for a resposta final (ou seja, se já foi respondido), apaga da caixa
+        if (caixa[id]) {
+            delete caixa[id]; // Limpa o espaço imediatamente após o envio
+        }
+        
+        return res.send(conteudo); // Entrega só, só, só a informação limpa pro App correspondente
     }
+
+    // ==========================================
+    // FLUXO DE ENVIO (Se veio COM informação na frente, guarda na caixa desse ID)
+    // Exemplo do App: :// video.mp4
+    // Exemplo do Termux: :// oi tudo bem?
+    // ==========================================
+    caixa[id] = informacaoLimpa; 
+    res.send("Armazenado"); 
 });
 
-app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Transporte rodando na porta ${PORT}`));
