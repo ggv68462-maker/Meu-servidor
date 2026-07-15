@@ -5,7 +5,11 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Pasta para salvar os dados
+
+// =========================
+// ARQUIVOS DE DADOS
+// =========================
+
 const pastaDados = path.join(__dirname, "dados_caixa");
 
 if (!fs.existsSync(pastaDados)) {
@@ -15,82 +19,133 @@ if (!fs.existsSync(pastaDados)) {
 const caminhoCaixa = path.join(pastaDados, "caixa.json");
 const caminhoRespostas = path.join(pastaDados, "respostas.json");
 
-// Carrega dados existentes
+
 let caixa = {};
 let respostas = {};
 
+
+// =========================
+// CARREGAR DADOS
+// =========================
+
 try {
+
     if (fs.existsSync(caminhoCaixa)) {
-        caixa = JSON.parse(fs.readFileSync(caminhoCaixa, "utf8"));
+        caixa = JSON.parse(
+            fs.readFileSync(caminhoCaixa, "utf8")
+        );
     }
 
     if (fs.existsSync(caminhoRespostas)) {
-        respostas = JSON.parse(fs.readFileSync(caminhoRespostas, "utf8"));
+        respostas = JSON.parse(
+            fs.readFileSync(caminhoRespostas, "utf8")
+        );
     }
-} catch (e) {
-    console.log("Erro carregando dados:", e);
+
+} catch(e) {
+
+    console.log("Erro ao carregar dados:", e);
+
 }
 
-// Salvar
-function salvarDados() {
+
+
+// =========================
+// SALVAR DADOS
+// =========================
+
+function salvarDados(){
+
     fs.writeFileSync(
         caminhoCaixa,
         JSON.stringify(caixa, null, 2),
         "utf8"
     );
 
+
     fs.writeFileSync(
         caminhoRespostas,
         JSON.stringify(respostas, null, 2),
         "utf8"
     );
+
 }
 
 
-app.get("*", (req, res) => {
 
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+// =========================
+// SERVIDOR
+// =========================
 
-    const url = decodeURIComponent(req.url).trim();
+app.get("*", (req,res)=>{
 
 
+    res.setHeader(
+        "Content-Type",
+        "text/plain; charset=utf-8"
+    );
+
+
+    let url = decodeURIComponent(req.url).trim();
+
+
+
+    // =========================
     // VER CAIXA
-    if (url === "/?caixa") {
-        res.setHeader("Content-Type", "application/json");
-        return res.send(JSON.stringify(caixa, null, 2));
+    // =========================
+
+    if(url === "/?caixa"){
+
+        res.setHeader(
+            "Content-Type",
+            "application/json"
+        );
+
+        return res.send(
+            JSON.stringify(caixa,null,2)
+        );
+
     }
 
 
-    if (!url.startsWith("/?")) {
+
+    if(!url.startsWith("/?")){
         return res.send("");
     }
 
 
+
     let texto = url.substring(2).trim();
 
-    // Remove ID=
-    texto = texto.replace(/^ID=/i, "");
+
+    // remove ID=
+    texto = texto.replace(/^ID=/i,"");
 
 
-    const primeiroEspaco = texto.indexOf(" ");
+
+    const espaco = texto.indexOf(" ");
+
 
 
     // =========================
-    // APP BUSCANDO RESPOSTA
+    // APP BUSCA RESPOSTA
     // Ex: /?1234
     // =========================
-    if (primeiroEspaco === -1) {
+
+    if(espaco === -1){
 
         const id = texto;
 
 
-        if (!respostas[id]) {
+        if(!respostas[id]){
             return res.send("");
         }
 
 
         const resposta = respostas[id];
 
+
+        // limpa depois de entregar
 
         delete respostas[id];
         delete caixa[id];
@@ -99,33 +154,50 @@ app.get("*", (req, res) => {
 
 
         return res.send(resposta);
+
     }
 
 
 
     // =========================
-    // SEPARA ID E MENSAGEM
+    // SEPARAR ID E MENSAGEM
     // =========================
 
-    const id = texto.substring(0, primeiroEspaco).trim();
+
+    const id = texto
+        .substring(0,espaco)
+        .trim();
+
 
     const mensagem = texto
-        .substring(primeiroEspaco + 1)
+        .substring(espaco + 1)
         .trim();
 
 
 
     // =========================
-    // RESPOSTA DA PESSOA
+    // RESPOSTA RECEBIDA
     // =========================
 
-    if (caixa[id]) {
 
-        respostas[id] = `(${mensagem})`;
+    if(caixa[id]){
+
+
+        if(!respostas[id]){
+            respostas[id] = "";
+        }
+
+
+        respostas[id] += `\n(${mensagem})`;
+
 
         salvarDados();
 
-        return res.send("Resposta recebida");
+
+        return res.send(
+            "Resposta recebida"
+        );
+
     }
 
 
@@ -134,16 +206,31 @@ app.get("*", (req, res) => {
     // NOVO PEDIDO DO APP
     // =========================
 
+
     caixa[id] = `(${mensagem})`;
+
+    // cria espaço para várias respostas
+    respostas[id] = "";
+
 
     salvarDados();
 
-    return res.send("Pedido armazenado");
+
+    return res.send(
+        "Pedido armazenado"
+    );
+
 
 });
 
 
 
-app.listen(PORT, () => {
-    console.log(`Servidor iniciado na porta ${PORT}`);
+
+
+app.listen(PORT,()=>{
+
+    console.log(
+        `Servidor iniciado na porta ${PORT}`
+    );
+
 });
