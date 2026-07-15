@@ -1,136 +1,98 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const app = express();
-
-// Aceita absolutamente qualquer formato de dado no corpo se precisar
-app.use(express.raw({ type: '*/*', limit: '50mb' }));
-
-const FILE_PATH = path.join('/tmp', 'mensagens_broker.json');
-
-function lerBanco() {
-    if (!fs.existsSync(FILE_PATH)) return { filaA: {}, respostasB: {} };
-    try {
-        return JSON.parse(fs.readFileSync(FILE_PATH, 'utf8'));
-    } catch (e) {
-        return { filaA: {}, respostasB: {} };
-    }
-}
-
-function salvarBanco(dados) {
-    fs.writeFileSync(FILE_PATH, JSON.stringify(dados, null, 2));
-}
-
-// =========================================================================
-// INTERCEPTADOR CENTRAL: Aceita qualquer ID variável vindo do Bot no link
-// =========================================================================
-app.all('/', (req, res) => {
-    let dadosBrutosUrl = "";
-
-    // Pega o texto bruto após o "?"
-    if (req.url && req.url.includes('?')) {
-        dadosBrutosUrl = req.url.substring(req.url.indexOf('?') + 1);
-    }
-
-    try {
-        dadosBrutosUrl = decodeURIComponent(dadosBrutosUrl.replace(/\+/g, ' '));
-    } catch (err) {}
-
-    if (!dadosBrutosUrl && req.body) {
-        dadosBrutosUrl = req.body.toString('utf8').trim();
-    }
-
-    // Pega qualquer sequência de números que apareça logo após "id="
-    const matchId = dadosBrutosUrl.match(/id\s*=\s*(\d+)/i);
-    
-    if (!matchId) {
-        // Se não achou nenhum ID na string, aí não tem como o transporte saber para quem entregar
-        console.log(`[A] Erro: Nao foi encontrado nenhum ID no texto recebido.`);
-        return res.status(400).send("Erro: ID nao identificado na URL.");
-    }
-    
-    // O ID_VARIAVEL é o número capturado da requisição atual
-    const idVariavel = matchId[1]; 
-    const banco = lerBanco();
-    
-    // Guarda o texto público exatamente como veio na URL para o Termux ler
-    banco.filaA[idVariavel] = dadosBrutosUrl;
-    salvarBanco(banco);
-    
-    console.log(`[Transporte] Nova mensagem na gaveta do ID: ${idVariavel}`);
-    
-    // Segura a conexão do Niotron até o Termux responder para esta gaveta específica
-    let tentativas = 0;
-    const checarResposta = setInterval(() => {
-        const bancoAtualizado = lerBanco();
-        
-        // Quando o Termux colocar uma resposta na gaveta desse ID variável, processa
-        if (bancoAtualizado.respostasB[idVariavel]) {
-            clearInterval(checarResposta);
-            
-            const respostaOriginalB = bancoAtualizado.respostasB[idVariavel];
-            
-            // Remove cirurgicamente a marcação correspondente àquele ID dinâmico
-            const regexLimpeza = new RegExp(`id\\s*=\\s*${idVariavel}\\s*`, 'i');
-            const respostaLimpa = respostaOriginalB.replace(regexLimpeza, '').trim();
-            
-            // Limpa as gavetas desse ID específico para liberar espaço
-            delete bancoAtualizado.filaA[idVariavel];
-            delete bancoAtualizado.respostasB[idVariavel];
-            salvarBanco(bancoAtualizado);
-            
-            console.log(`[Transporte] Repassando info limpa para o ID ${idVariavel}`);
-            return res.send(respostaLimpa);
-        }
-        
-        tentativas++;
-        if (tentativas > 30) { 
-            clearInterval(checarResposta);
-            const bancoTimeout = lerBanco();
-            delete bancoTimeout.filaA[idVariavel];
-            salvarBanco(bancoTimeout);
-            return res.status(504).send("Timeout");
-        }
-    }, 1000);
-});
-
-// ==========================================
-// 2. TERMUX (B) - PEGA A LISTA DE MENSAGENS
-// ==========================================
-app.get('/procurar-mensagens', (req, res) => {
-    const banco = lerBanco();
-    res.setHeader('Content-Type', 'application/json');
-    return res.json(banco.filaA);
-});
-
-// ==========================================
-// 3. TERMUX (B) - DEVOLVE A RESPOSTA DO ID
-// ==========================================
-app.post('/responder-b', (req, res) => {
-    let corpoB = req.body ? req.body.toString('utf8').trim() : "";
-    
-    try {
-        if (corpoB.includes('%') || corpoB.includes('+')) {
-            corpoB = decodeURIComponent(corpoB.replace(/\+/g, ' '));
-        }
-    } catch (e) {}
-
-    // Pega o ID que o Termux incluiu na resposta para saber em qual gaveta colocar
-    const matchId = corpoB.match(/id\s*=\s*(\d+)/i);
-    
-    if (!matchId) {
-        return res.status(400).send("Erro: Resposta sem ID informado.");
-    }
-    
-    const idVariavelB = matchId[1];
-    const banco = lerBanco();
-    
-    // Armazena na gaveta do ID correto
-    banco.respostasB[idVariavelB] = corpoB;
-    salvarBanco(banco);
-    
-    return res.send("OK");
-});
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Broker de transporte ativo na porta ${PORT}`));
+
+// Permite receber textos puros nas requisições
+app.use(express.text());
+app.use(express.json());
+
+// Banco de dados temporário em memória
+const buffer = {};
+
+/**
+ * 1. COMPONENTE A ENVIANDO DADOS
+ * O link termina com ? seguido do ID e da mensagem.
+ * Exemplo de URL que o A vai chamar: /enviar?ID=82828282 oi
+ */
+app.all('/enviar', (req, res) => {
+    // Pega tudo que está depois do "?" na URL
+    const urlParts = req.url.split('?');
+    if (urlParts.length < 2) {
+        return res.status(400).send("Formato inválido. Use ?ID=codigo mensagem");
+    }
+
+    const queryCompleta = decodeURIComponent(urlParts[1]);
+
+    // Extrai o ID e o Conteúdo usando Regex (pega o que está entre 'ID=' e o primeiro espaço)
+    const match = queryCompleta.match(/^ID=(\S+)\s+(.*)$/);
+
+    if (!match) {
+        return res.status(400).send("ID não encontrado no formato correto.");
+    }
+
+    const id = match[1];
+    const mensagem = match[2];
+
+    // Armazena no buffer público para o Termux (B) buscar
+    buffer[id] = {
+        mensagemDeA: mensagem,
+        respostaDeB: null,
+        status: 'aguardando_b'
+    };
+
+    // Mantém a conexão do Componente A aberta (Long Polling) até B responder
+    const checarResposta = setInterval(() => {
+        if (buffer[id] && buffer[id].status === 'respondido') {
+            const respostaFinal = buffer[id].respostaDeB;
+            
+            clearInterval(checarResposta);
+            delete buffer[id]; // Apaga tudo do mapa após enviar para o app A
+            
+            return res.send(respostaFinal);
+        }
+        
+        // Timeout de segurança após 2 minutos para não travar o servidor
+    }, 1000);
+    
+    req.on('close', () => clearInterval(checarResposta));
+});
+
+/**
+ * 2. TERMUX (B) CONSULTA MENSAGENS PÚBLICAS
+ * O Termux bate aqui para ver o que tem na fila para processar.
+ */
+app.get('/fila', (req, res) => {
+    res.json(buffer);
+});
+
+/**
+ * 3. TERMUX (B) DEVOLVE A RESPOSTA
+ * Exemplo de corpo da requisição (texto plano): ID=82828282 oi tudo bem?
+ */
+app.post('/resposta', (express.text({ type: '*/*' })), (req, res) => {
+    const corpo = req.body.trim();
+    
+    // Extrai o ID e o resto do texto que veio do Termux
+    const match = corpo.match(/^ID=(\S+)\s+(.*)$/);
+    
+    if (!match) {
+        return res.status(400).send("Formato da resposta inválido.");
+    }
+    
+    const id = match[1];
+    const informacaoPura = match[2]; // Removeu o ID, sobrou só a informação
+
+    if (buffer[id]) {
+        // Alimenta o buffer com a informação limpa e muda o status
+        buffer[id].respostaDeB = informacaoPura;
+        buffer[id].status = 'respondido';
+        
+        return res.send("Sucesso. Repassado para o usuário e apagado.");
+    } else {
+        return res.status(404).send("Esse ID não existe mais ou expirou.");
+    }
+});
+
+app.listen(PORT, () => {
+    console.log(`Transporte rodando na porta ${PORT}`);
+});
