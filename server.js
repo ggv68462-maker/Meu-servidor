@@ -5,13 +5,11 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Garante que a pasta principal de persistência exista no Render
 const pastaDados = path.join(__dirname, "dados_caixa");
 if (!fs.existsSync(pastaDados)) {
     fs.mkdirSync(pastaDados, { recursive: true });
 }
 
-// Caminho dos arquivos JSON
 const caminhoCaixa = path.join(pastaDados, "caixa.json");
 const caminhoRespostas = path.join(pastaDados, "respostas.json");
 
@@ -30,7 +28,6 @@ try {
     respostas = {};
 }
 
-// Gravação síncrona segura no arquivo
 const salvarDados = () => {
     try {
         fs.writeFileSync(caminhoCaixa, JSON.stringify(caixa, null, 2), "utf8");
@@ -49,7 +46,16 @@ app.get("*", (req, res) => {
     // MOSTRAR A CAIXA
     // =========================
     if (url === "/?caixa") {
-        return res.json(caixa);
+        // Converte as listas internas em texto com parênteses apenas na exibição
+        const caixaExibicao = {};
+        for (const id in caixa) {
+            if (Array.isArray(caixa[id])) {
+                caixaExibicao[id] = caixa[id].map(m => `(${m})`).join("");
+            } else {
+                caixaExibicao[id] = `(${caixa[id]})`;
+            }
+        }
+        return res.json(caixaExibicao);
     }
 
     if (!url.startsWith("/?"))
@@ -69,43 +75,46 @@ app.get("*", (req, res) => {
         if (!respostas[id])
             return res.send("");
 
-        const resposta = respostas[id];
+        const listaRespostas = respostas[id];
 
         delete respostas[id];
         delete caixa[id];
 
         salvarDados();
 
-        // Retorna todas as mensagens juntas, cada uma no seu próprio ()
-        return res.send(resposta);
+        // Entrega as mensagens envelopadas em () lado a lado
+        if (Array.isArray(listaRespostas)) {
+            return res.send(listaRespostas.map(m => `(${m})`).join(""));
+        }
+        return res.send(`(${listaRespostas})`);
     }
 
     const id = texto.substring(0, espaco).trim();
     const mensagem = texto.substring(espaco + 1).trim();
 
-    // Formata a mensagem envolvendo-a entre parênteses
-    const mensagemFormatada = `(${mensagem})`;
-
     // =========================
-    // SE O ID JÁ EXISTE NA CAIXA, ACUMULA
+    // SE O ID JÁ EXISTE NA CAIXA, ADICIONA À LISTA PUREZA
     // =========================
     if (caixa[id]) {
-        // Concatena a nova mensagem formatada ao final da string existente
-        respostas[id] = (respostas[id] || "") + mensagemFormatada;
-        
-        // Também atualiza na caixa para você ver pelo /?caixa
-        caixa[id] = (caixa[id] || "") + mensagemFormatada;
+        if (!Array.isArray(caixa[id])) {
+            caixa[id] = [caixa[id]];
+        }
+        if (!Array.isArray(respostas[id])) {
+            respostas[id] = respostas[id] ? [respostas[id]] : [];
+        }
+
+        caixa[id].push(mensagem);
+        respostas[id].push(mensagem);
         
         salvarDados();
-
         return res.send("Resposta recebida");
     }
 
     // =========================
     // NOVO PEDIDO DO APP
     // =========================
-    caixa[id] = mensagemFormatada;
-    respostas[id] = mensagemFormatada;
+    caixa[id] = [mensagem];
+    respostas[id] = [mensagem];
     salvarDados();
 
     return res.send("Pedido armazenado");
