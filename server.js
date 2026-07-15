@@ -5,35 +5,27 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Garante que a pasta principal exista no Render
 const pastaDados = path.join(__dirname, "dados_caixa");
 if (!fs.existsSync(pastaDados)) {
     fs.mkdirSync(pastaDados, { recursive: true });
 }
 
+// Arquivos para salvar as variáveis locais
 const caminhoCaixa = path.join(pastaDados, "caixa.json");
 const caminhoRespostas = path.join(pastaDados, "respostas.json");
 
-let caixa = {};
-let respostas = {};
+// Inicializa lendo dos arquivos ou cria objetos vazios
+let caixa = fs.existsSync(caminhoCaixa) ? JSON.parse(fs.readFileSync(caminhoCaixa, "utf8")) : {};
+let respostas = fs.existsSync(caminhoRespostas) ? JSON.parse(fs.readFileSync(caminhoRespostas, "utf8")) : {};
 
-try {
-    if (fs.existsSync(caminhoCaixa)) {
-        caixa = JSON.parse(fs.readFileSync(caminhoCaixa, "utf8")) || {};
-    }
-    if (fs.existsSync(caminhoRespostas)) {
-        respostas = JSON.parse(fs.readFileSync(caminhoRespostas, "utf8")) || {};
-    }
-} catch (e) {
-    caixa = {};
-    respostas = {};
-}
-
+// Função simples para salvar o estado atualizado
 const salvarDados = () => {
     try {
         fs.writeFileSync(caminhoCaixa, JSON.stringify(caixa, null, 2), "utf8");
         fs.writeFileSync(caminhoRespostas, JSON.stringify(respostas, null, 2), "utf8");
-    } catch (erro) {
-        console.error("Erro ao gravar arquivos:", erro);
+    } catch (e) {
+        console.error("Erro ao salvar arquivos", e);
     }
 };
 
@@ -46,66 +38,48 @@ app.get("*", (req, res) => {
     // MOSTRAR A CAIXA
     // =========================
     if (url === "/?caixa") {
-        // Converte as listas internas em texto com parênteses apenas na exibição
-        const caixaExibicao = {};
-        for (const id in caixa) {
-            if (Array.isArray(caixa[id])) {
-                caixaExibicao[id] = caixa[id].map(m => `(${m})`).join("");
-            } else {
-                caixaExibicao[id] = `(${caixa[id]})`;
-            }
-        }
-        return res.json(caixaExibicao);
+        return res.json(caixa);
     }
 
     if (!url.startsWith("/?"))
         return res.send("");
 
-    let texto = url.substring(2).trim();
-    texto = texto.replace(/^ID=/i, "");
+    const texto = url.substring(2).trim();
 
-    const espaco = texto.indexOf(" ");
+    // REGEX PERFEITA: Captura tudo que estiver antes da mensagem como ID de forma exata
+    // Exemplo: se o texto for "ID=1234 B+ mensagem_aqui", o ID isolado será "ID=1234 B+"
+    const correspondencia = texto.match(/^(.+?)\s+(.+)$/);
 
     // =========================
-    // APP BUSCANDO RESPOSTA
+    // APP BUSCANDO RESPOSTA (Não tem espaço separando mensagem)
+    // Ex.: /?1234 ou /?ID=1234 B+
     // =========================
-    if (espaco === -1) {
-        const id = texto;
+    if (!correspondencia) {
+        const id = texto.replace(/^ID=/i, "").trim();
 
         if (!respostas[id])
             return res.send("");
 
-        const listaRespostas = respostas[id];
+        const resposta = respostas[id];
 
         delete respostas[id];
         delete caixa[id];
 
         salvarDados();
 
-        // Entrega as mensagens envelopadas em () lado a lado
-        if (Array.isArray(listaRespostas)) {
-            return res.send(listaRespostas.map(m => `(${m})`).join(""));
-        }
-        return res.send(`(${listaRespostas})`);
+        return res.send(resposta);
     }
 
-    const id = texto.substring(0, espaco).trim();
-    const mensagem = texto.substring(espaco + 1).trim();
+    // Extrai o ID e a mensagem de forma estrita usando a Regex
+    const idBruto = correspondencia[1].trim();
+    const id = idBruto.replace(/^ID=/i, "").trim(); // Remove o "ID=" apenas para o índice interno
+    const mensagem = correspondencia[2].trim();
 
     // =========================
-    // SE O ID JÁ EXISTE NA CAIXA, ADICIONA À LISTA PUREZA
+    // SE O ID JÁ EXISTE NA CAIXA, ATUALIZA A RESPOSTA (SEM SOMAR OU MULTIPLICAR)
     // =========================
     if (caixa[id]) {
-        if (!Array.isArray(caixa[id])) {
-            caixa[id] = [caixa[id]];
-        }
-        if (!Array.isArray(respostas[id])) {
-            respostas[id] = respostas[id] ? [respostas[id]] : [];
-        }
-
-        caixa[id].push(mensagem);
-        respostas[id].push(mensagem);
-        
+        respostas[id] = mensagem;
         salvarDados();
         return res.send("Resposta recebida");
     }
@@ -113,8 +87,8 @@ app.get("*", (req, res) => {
     // =========================
     // NOVO PEDIDO DO APP
     // =========================
-    caixa[id] = [mensagem];
-    respostas[id] = [mensagem];
+    caixa[id] = mensagem;
+    respostas[id] = mensagem;
     salvarDados();
 
     return res.send("Pedido armazenado");
