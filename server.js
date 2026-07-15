@@ -2,97 +2,87 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Permite receber textos puros nas requisições
-app.use(express.text());
-app.use(express.json());
+// Armazenamento temporário na memória do Render
+let dadosDeA = {}; // Guarda o que o Termux vai ler
+let dadosDeB = {}; // Guarda o que o App vai ler
 
-// Banco de dados temporário em memória
-const buffer = {};
+// 1. APP (A) ENVIA TUDO DEPOIS DO '?'
+// O App chama: https://onrender.com
+app.all('/salvarA', (req, res) => {
+    const urlCompleta = req.url;
+    const temInterrogacao = urlCompleta.indexOf('?');
 
-/**
- * 1. COMPONENTE A ENVIANDO DADOS
- * O link termina com ? seguido do ID e da mensagem.
- * Exemplo de URL que o A vai chamar: /enviar?ID=82828282 oi
- */
-app.all('/enviar', (req, res) => {
-    // Pega tudo que está depois do "?" na URL
-    const urlParts = req.url.split('?');
-    if (urlParts.length < 2) {
-        return res.status(400).send("Formato inválido. Use ?ID=codigo mensagem");
-    }
+    if (temInterrogacao === -1) return res.send("Sem dados");
 
-    const queryCompleta = decodeURIComponent(urlParts[1]);
+    // Pega absolutamente TUDO que está depois do '?'
+    const stringBruta = urlCompleta.substring(temInterrogacao + 1);
+    
+    // Procura o ID na string (ex: ID=828282) para saber onde guardar
+    const matchId = stringBruta.match(/ID=([^& \s]+)/);
+    if (!matchId) return res.send("ID nao encontrado");
+    
+    const id = matchId[1];
 
-    // Extrai o ID e o Conteúdo usando Regex (pega o que está entre 'ID=' e o primeiro espaço)
-    const match = queryCompleta.match(/^ID=(\S+)\s+(.*)$/);
+    // Guarda a informação bruta de A
+    dadosDeA[id] = stringBruta;
+    delete dadosDeB[id]; // Limpa histórico antigo se houver
 
-    if (!match) {
-        return res.status(400).send("ID não encontrado no formato correto.");
-    }
+    res.send("Armazenado");
+});
 
-    const id = match[1];
-    const mensagem = match[2];
+// 2. TERMUX (B) COLETA O QUE A MANDOU
+app.get('/lerParaTermux', (req, res) => {
+    res.json(dadosDeA);
+});
 
-    // Armazena no buffer público para o Termux (B) buscar
-    buffer[id] = {
-        mensagemDeA: mensagem,
-        respostaDeB: null,
-        status: 'aguardando_b'
-    };
+// 3. TERMUX (B) RESPONDE DEVOLVENDO TUDO DEPOIS DO '?'
+// O Termux chama: https://onrender.com tudo bem?
+app.all('/salvarB', (req, res) => {
+    const urlCompleta = req.url;
+    const temInterrogacao = urlCompleta.indexOf('?');
 
-    // Mantém a conexão do Componente A aberta (Long Polling) até B responder
-    const checarResposta = setInterval(() => {
-        if (buffer[id] && buffer[id].status === 'respondido') {
-            const respostaFinal = buffer[id].respostaDeB;
-            
-            clearInterval(checarResposta);
-            delete buffer[id]; // Apaga tudo do mapa após enviar para o app A
-            
-            return res.send(respostaFinal);
-        }
+    if (temInterrogacao === -1) return res.send("Sem dados");
+
+    const stringBruta = urlCompleta.substring(temInterrogacao + 1);
+    
+    const matchId = stringBruta.match(/ID=([^& \s]+)/);
+    if (!matchId) return res.send("ID nao encontrado");
+    
+    const id = matchId[1];
+
+    // 1. APAGA a mensagem que o A tinha mandado (o Termux já leu)
+    delete dadosDeA[id];
+
+    // 2. Tira o ID da resposta para o App receber apenas a informação limpa
+    // Remove "ID=XXXXXX" e qualquer caractere que sobrou grudado
+    let informacaoLimpa = stringBruta.replace(/ID=[^& \s]+/, '').trim();
+    if (informacaoLimpa.startsWith('&')) informacaoLimpa = informacaoLimpa.substring(1);
+
+    // 3. Armazena temporariamente para o App pegar
+    dadosDeB[id] = informacaoLimpa;
+
+    res.send("Recebido");
+});
+
+// 4. APP (A) PEGA A INFORMAÇÃO LIMPA SEM O ID
+// O App chama: https://onrender.com
+app.get('/pegarResposta', (req, res) => {
+    const urlCompleta = req.url;
+    const matchId = urlCompleta.match(/ID=([^& \s]+)/);
+    
+    if (!matchId) return res.send("");
+    const id = matchId[1];
+
+    if (dadosDeB[id]) {
+        const respostaFinal = dadosDeB[id];
         
-        // Timeout de segurança após 2 minutos para não travar o servidor
-    }, 1000);
-    
-    req.on('close', () => clearInterval(checarResposta));
-});
-
-/**
- * 2. TERMUX (B) CONSULTA MENSAGENS PÚBLICAS
- * O Termux bate aqui para ver o que tem na fila para processar.
- */
-app.get('/fila', (req, res) => {
-    res.json(buffer);
-});
-
-/**
- * 3. TERMUX (B) DEVOLVE A RESPOSTA
- * Exemplo de corpo da requisição (texto plano): ID=82828282 oi tudo bem?
- */
-app.post('/resposta', (express.text({ type: '*/*' })), (req, res) => {
-    const corpo = req.body.trim();
-    
-    // Extrai o ID e o resto do texto que veio do Termux
-    const match = corpo.match(/^ID=(\S+)\s+(.*)$/);
-    
-    if (!match) {
-        return res.status(400).send("Formato da resposta inválido.");
-    }
-    
-    const id = match[1];
-    const informacaoPura = match[2]; // Removeu o ID, sobrou só a informação
-
-    if (buffer[id]) {
-        // Alimenta o buffer com a informação limpa e muda o status
-        buffer[id].respostaDeB = informacaoPura;
-        buffer[id].status = 'respondido';
+        // APAGA a resposta do B do Render imediatamente após enviar pro App
+        delete dadosDeB[id]; 
         
-        return res.send("Sucesso. Repassado para o usuário e apagado.");
-    } else {
-        return res.status(404).send("Esse ID não existe mais ou expirou.");
+        return res.send(respostaFinal); // Envia só o texto limpo
     }
+
+    res.send(""); // Se B não respondeu ainda, volta vazio
 });
 
-app.listen(PORT, () => {
-    console.log(`Transporte rodando na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Rodando proxy na porta ${PORT}`));
