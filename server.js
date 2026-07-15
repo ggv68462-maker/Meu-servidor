@@ -15,7 +15,6 @@ if (!fs.existsSync(pastaDados)) {
 const caminhoCaixa = path.join(pastaDados, "caixa.json");
 const caminhoRespostas = path.join(pastaDados, "respostas.json");
 
-// Inicializa as variáveis lendo com segurança (ou cria objeto vazio)
 let caixa = {};
 let respostas = {};
 
@@ -27,18 +26,17 @@ try {
         respostas = JSON.parse(fs.readFileSync(caminhoRespostas, "utf8")) || {};
     }
 } catch (e) {
-    console.error("Erro ao ler arquivos iniciais, iniciando vazio:", e);
     caixa = {};
     respostas = {};
 }
 
-// Função síncrona blindada para salvar o estado atualizado imediatamente
+// Gravação síncrona segura no arquivo
 const salvarDados = () => {
     try {
         fs.writeFileSync(caminhoCaixa, JSON.stringify(caixa, null, 2), "utf8");
         fs.writeFileSync(caminhoRespostas, JSON.stringify(respostas, null, 2), "utf8");
     } catch (erro) {
-        console.error("Erro crítico ao gravar arquivos no disco:", erro);
+        console.error("Erro ao gravar arquivos:", erro);
     }
 };
 
@@ -58,17 +56,14 @@ app.get("*", (req, res) => {
         return res.send("");
 
     let texto = url.substring(2).trim();
-
     texto = texto.replace(/^ID=/i, "");
 
     const espaco = texto.indexOf(" ");
 
     // =========================
     // APP BUSCANDO RESPOSTA
-    // Ex.: /?ID=123
     // =========================
     if (espaco === -1) {
-
         const id = texto;
 
         if (!respostas[id])
@@ -79,23 +74,29 @@ app.get("*", (req, res) => {
         delete respostas[id];
         delete caixa[id];
 
-        salvarDados(); // Grava a remoção no arquivo imediatamente
+        salvarDados();
 
-        // O APP RECEBE APENAS ISSO
+        // Retorna todas as mensagens juntas, cada uma no seu próprio ()
         return res.send(resposta);
     }
 
     const id = texto.substring(0, espaco).trim();
     const mensagem = texto.substring(espaco + 1).trim();
 
+    // Formata a mensagem envolvendo-a entre parênteses
+    const mensagemFormatada = `(${mensagem})`;
+
     // =========================
-    // SE O ID JÁ EXISTE NA CAIXA,
-    // ISSO É UMA RESPOSTA
+    // SE O ID JÁ EXISTE NA CAIXA, ACUMULA
     // =========================
     if (caixa[id]) {
-
-        respostas[id] = mensagem;
-        salvarDados(); // Grava a nova resposta recebida no arquivo
+        // Concatena a nova mensagem formatada ao final da string existente
+        respostas[id] = (respostas[id] || "") + mensagemFormatada;
+        
+        // Também atualiza na caixa para você ver pelo /?caixa
+        caixa[id] = (caixa[id] || "") + mensagemFormatada;
+        
+        salvarDados();
 
         return res.send("Resposta recebida");
     }
@@ -103,8 +104,9 @@ app.get("*", (req, res) => {
     // =========================
     // NOVO PEDIDO DO APP
     // =========================
-    caixa[id] = mensagem;
-    salvarDados(); // Grava o novo pedido na caixa do arquivo
+    caixa[id] = mensagemFormatada;
+    respostas[id] = mensagemFormatada;
+    salvarDados();
 
     return res.send("Pedido armazenado");
 });
