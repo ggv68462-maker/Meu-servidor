@@ -3,8 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const app = express();
 
-// 🔥 CONFIGURAÇÃO CRUCIAL: Aceita absolutamente QUALQUER tipo de dado (texto, binário, formulários)
-// Transforma tudo o que chega em um Buffer bruto, sem tentar adivinhar ou falhar por formato inválido
+// Permite receber dados brutos em qualquer formato por precaução
 app.use(express.raw({ type: '*/*', limit: '50mb' }));
 
 const FILE_PATH = path.join('/tmp', 'mensagens_broker.json');
@@ -22,44 +21,52 @@ function salvarBanco(dados) {
     fs.writeFileSync(FILE_PATH, JSON.stringify(dados, null, 2));
 }
 
-// ==========================================
-// 1. COMPONENTE A (Niotron Bot) - ENVIA QUALQUER COISA
-// ==========================================
-app.post('/enviar-a', (req, res) => {
-    // Converte o buffer bruto recebido diretamente em string UTF-8
-    let corpoBruto = req.body ? req.body.toString('utf8').trim() : "";
-    
-    // Tratamento para decodificar caso o componente Web1 envie como URL Encoded (ex: ID%3D82828282+GOSTEI)
+// =========================================================================
+// INTERCEPTADOR CENTRAL: Escuta a rota raiz (/) e trata o disparo "?ID=..."
+// =========================================================================
+app.all('/', (req, res) => {
+    let dadosBrutosUrl = "";
+
+    // Captura exatamente a string crua da URL após o caractere "?"
+    if (req.url && req.url.includes('?')) {
+        // Divide no primeiro "?" e pega tudo o que está à direita
+        dadosBrutosUrl = req.url.substring(req.url.indexOf('?') + 1);
+    }
+
+    // Decodifica caracteres especiais da URL (converte %3D para =, + para espaço, etc.)
     try {
-        if (corpoBruto.includes('%') || corpoBruto.includes('+')) {
-            corpoBruto = decodeURIComponent(corpoBruto.replace(/\+/g, ' '));
-        }
+        dadosBrutosUrl = decodeURIComponent(dadosBrutosUrl.replace(/\+/g, ' '));
     } catch (err) {
-        // Se falhar na decodificação, mantém o texto exatamente como veio do buffer
+        // Mantém o texto bruto se houver falha na conversão
     }
 
-    if (!corpoBruto) {
-        return res.status(400).send("Erro: Corpo da mensagem vazio.");
+    // Se por acaso a URL veio sem nada após o "?", tenta ler o corpo como plano B
+    if (!dadosBrutosUrl && req.body) {
+        dadosBrutosUrl = req.body.toString('utf8').trim();
     }
 
-    // Procura pela estrutura ID=XXXXX usando regex flexível no texto bruto decodificado
-    const matchId = corpoBruto.match(/id\s*=\s*(\d+)/i);
+    if (!dadosBrutosUrl) {
+        return res.status(400).send("Erro: Nenhuma informacao foi localizada apos o '?' na URL.");
+    }
+
+    // Procura pela estrutura ID=XXXXX usando expressão regular flexível
+    const matchId = dadosBrutosUrl.match(/id\s*=\s*(\d+)/i);
     
     if (!matchId) {
-        console.log(`[A - ERRO BRUTO] Recebido sem ID identificável: "${corpoBruto}"`);
-        return res.status(400).send("Erro: ID de usuário não localizado no fluxo.");
+        console.log(`[A - ERRO] Texto capturado sem ID valido na URL: "${dadosBrutosUrl}"`);
+        return res.status(400).send("Erro: ID de usuario nao localizado na string da URL.");
     }
     
-    const idCodigo = matchId[1];
+    const idCodigo = matchId[1]; // Isola apenas os números do ID capturado
     const banco = lerBanco();
     
-    // Armazena o dado bruto público exatamente como veio
-    banco.filaA[idCodigo] = corpoBruto;
+    // Armazena a informação da URL de forma pública para o Termux
+    banco.filaA[idCodigo] = dadosBrutosUrl;
     salvarBanco(banco);
     
-    console.log(`[A - SUCESSO] Armazenado ID ${idCodigo}. Conteúdo Bruto: "${corpoBruto}"`);
+    console.log(`[A - SUCESSO] ID ${idCodigo} detectado na raiz. Conteudo: "${dadosBrutosUrl}"`);
     
-    // Inicia o mecanismo de espera (Long Polling) para segurar o Niotron até o Termux responder
+    // Mantém o robô aguardando a resposta do Termux (Long Polling)
     let tentativas = 0;
     const checarResposta = setInterval(() => {
         const bancoAtualizado = lerBanco();
@@ -69,16 +76,16 @@ app.post('/enviar-a', (req, res) => {
             
             const respostaOriginalB = bancoAtualizado.respostasB[idCodigo];
             
-            // Remove cirurgicamente a marcação ID=XXXXXX da resposta do Termux para o App receber apenas dados
+            // Remove cirurgicamente a tag ID=XXXXXX da resposta fornecida pelo Termux
             const regexLimpeza = new RegExp(`id\\s*=\\s*${idCodigo}\\s*`, 'i');
             const respostaLimpa = respostaOriginalB.replace(regexLimpeza, '').trim();
             
-            // Limpa as filas do arquivo temporário
+            // Remove os registros processados para limpar o banco temporário
             delete bancoAtualizado.filaA[idCodigo];
             delete bancoAtualizado.respostasB[idCodigo];
             salvarBanco(bancoAtualizado);
             
-            console.log(`[Render] Respondendo de volta para o Bot Niotron (Sem ID): "${respostaLimpa}"`);
+            console.log(`[Render] Enviando resposta limpa de volta para o Bot: "${respostaLimpa}"`);
             return res.send(respostaLimpa);
         }
         
@@ -88,7 +95,7 @@ app.post('/enviar-a', (req, res) => {
             const bancoTimeout = lerBanco();
             delete bancoTimeout.filaA[idCodigo];
             salvarBanco(bancoTimeout);
-            return res.status(504).send("Timeout: O terminal do Termux demorou.");
+            return res.status(504).send("Timeout: O terminal do Termux nao respondeu a tempo.");
         }
     }, 1000);
 });
@@ -117,7 +124,7 @@ app.post('/responder-b', (req, res) => {
     const matchId = corpoB.match(/id\s*=\s*(\d+)/i);
     
     if (!matchId) {
-        return res.status(400).send("Erro: Resposta do Termux sem ID válido.");
+        return res.status(400).send("Erro: Resposta do Termux sem ID valido.");
     }
     
     const idCodigo = matchId[1];
@@ -130,4 +137,4 @@ app.post('/responder-b', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Servidor de Transporte Totalmente Aberto na porta ${PORT}`));
+app.listen(PORT, () => console.log(`Servidor de Transporte na URL Raiz ativo na porta ${PORT}`));
