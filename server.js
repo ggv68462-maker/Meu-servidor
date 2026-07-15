@@ -9,26 +9,34 @@ const PORT = process.env.PORT || 3000;
 // Guarda as conexões do Kodular abertas na memória RAM
 const requisicoesDoApp = {};
 
-// 1. ROTA QUE ENCAIXA PERFEITAMENTE NOS SEUS BLOCOS DO KODULAR (GET)
-// Captura qualquer URL que comece com "/ID=" (Ex: /ID=123GOSTEI, /ID=55B+)
-app.get('/ID=:restoDaUrl', (req, res) => {
-    // Reconstrói a chave exatamente como o Kodular enviou (ex: "ID=123GOSTEI")
-    const chaveIdentificadora = 'ID=' + req.params.restoDaUrl;
+// 1. ROTA PRINCIPAL AJUSTADA PARA PEGAR O "/?" DO KODULAR
+app.get('/', (req, res) => {
+    // Pega o objeto de query (ex: se a URL for /?ID=123GOSTEI, req.query terá {"ID=123GOSTEI": ""})
+    const chavesQuery = Object.keys(req.query);
 
-    console.log(`[Kodular] Conexão aberta para: ${chaveIdentificadora}. Aguardando Termux...`);
+    // Se o Kodular enviou algo depois do "?"
+    if (chavesQuery.length > 0) {
+        const chaveIdentificadora = chavesQuery[0]; // Captura o "ID=123GOSTEI"
 
-    // Segura a conexão do aplicativo na memória
-    requisicoesDoApp[chaveIdentificadora] = res;
+        console.log(`[Kodular] Conexão aberta via Query: ${chaveIdentificadora}. Aguardando Termux...`);
 
-    // Abre a janela de 60 segundos exatos
-    setTimeout(() => {
-        if (requisicoesDoApp[chaveIdentificadora]) {
-            console.log(`[Timeout] O Termux não respondeu a tempo para: ${chaveIdentificadora}`);
-            // Envia um aviso para o Web1.GotText não ficar travado vazio
-            requisicoesDoApp[chaveIdentificadora].status(200).send(""); 
-            delete requisicoesDoApp[chaveIdentificadora];
-        }
-    }, 60000);
+        // Segura a conexão do aplicativo na memória
+        requisicoesDoApp[chaveIdentificadora] = res;
+
+        // Abre a janela de 60 segundos exatos
+        setTimeout(() => {
+            if (requisicoesDoApp[chaveIdentificadora]) {
+                console.log(`[Timeout] O Termux não respondeu a tempo para: ${chaveIdentificadora}`);
+                requisicoesDoApp[chaveIdentificadora].status(200).send(""); 
+                delete requisicoesDoApp[chaveIdentificadora];
+            }
+        }, 60000);
+
+        return; // Sai da função para deixar a conexão suspensa esperando o Termux
+    }
+
+    // Se alguém acessar a URL pura pelo navegador sem o "?", mostra essa mensagem:
+    res.send('Servidor de Repasse Ativo e Pareado com o Kodular.');
 });
 
 // 2. ROTA PARA O TERMUX VER QUAIS IDS DO APP ESTÃO TRAVADOS ESPERANDO AGORA
@@ -37,14 +45,13 @@ app.get('/termux/pendentes', (req, res) => {
     return res.status(200).json(pendentes); // Retorna ex: ["ID=123GOSTEI"]
 });
 
-// 3. ROTA PARA O TERMUX ENVIAR A RESPOSTA (O LINK DO VÍDEO)
-// O Termux faz um POST para https://render.com
+// 3. ROTA PARA O TERMUX ENVIAR A RESPOSTA
 app.post('/termux/resposta/:chave', (req, res) => {
     const chaveIdentificadora = req.params.chave;
     const linkDoVideo = req.body ? req.body.trim() : "";
 
     if (requisicoesDoApp[chaveIdentificadora]) {
-        console.log(`[Sucesso] Entregando link do vídeo para o App: ${linkDoVideo}`);
+        console.log(`[Sucesso] Entregando resposta para o App: ${linkDoVideo}`);
         
         // Devolve o link direto para o bloco "get responseContent" do seu Kodular
         requisicoesDoApp[chaveIdentificadora].status(200).send(linkDoVideo);
@@ -56,11 +63,6 @@ app.post('/termux/resposta/:chave', (req, res) => {
     }
 
     return res.status(404).send("Esta requisição já expirou ou não existe.");
-});
-
-// Rota base padrão do Render
-app.get('/', (req, res) => {
-    res.send('Servidor de Repasse Ativo e Pareado com o Kodular.');
 });
 
 app.listen(PORT, () => {
