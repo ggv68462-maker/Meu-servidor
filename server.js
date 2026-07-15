@@ -8,21 +8,38 @@ const PORT = process.env.PORT || 3000;
 // Garante que a pasta principal de persistência exista no Render
 const pastaDados = path.join(__dirname, "dados_caixa");
 if (!fs.existsSync(pastaDados)) {
-    fs.mkdirSync(pastaDados);
+    fs.mkdirSync(pastaDados, { recursive: true });
 }
 
-// Arquivos para salvar o estado
+// Caminho dos arquivos JSON
 const caminhoCaixa = path.join(pastaDados, "caixa.json");
 const caminhoRespostas = path.join(pastaDados, "respostas.json");
 
-// Inicializa as variáveis lendo dos arquivos (ou cria vazio se não existirem)
-const caixa = fs.existsSync(caminhoCaixa) ? JSON.parse(fs.readFileSync(caminhoCaixa)) : {};
-const respostas = fs.existsSync(caminhoRespostas) ? JSON.parse(fs.readFileSync(caminhoRespostas)) : {};
+// Inicializa as variáveis lendo com segurança (ou cria objeto vazio)
+let caixa = {};
+let respostas = {};
 
-// Função auxiliar para salvar o estado atualizado
+try {
+    if (fs.existsSync(caminhoCaixa)) {
+        caixa = JSON.parse(fs.readFileSync(caminhoCaixa, "utf8")) || {};
+    }
+    if (fs.existsSync(caminhoRespostas)) {
+        respostas = JSON.parse(fs.readFileSync(caminhoRespostas, "utf8")) || {};
+    }
+} catch (e) {
+    console.error("Erro ao ler arquivos iniciais, iniciando vazio:", e);
+    caixa = {};
+    respostas = {};
+}
+
+// Função síncrona blindada para salvar o estado atualizado imediatamente
 const salvarDados = () => {
-    fs.writeFileSync(caminhoCaixa, JSON.stringify(caixa, null, 2));
-    fs.writeFileSync(caminhoRespostas, JSON.stringify(respostas, null, 2));
+    try {
+        fs.writeFileSync(caminhoCaixa, JSON.stringify(caixa, null, 2), "utf8");
+        fs.writeFileSync(caminhoRespostas, JSON.stringify(respostas, null, 2), "utf8");
+    } catch (erro) {
+        console.error("Erro crítico ao gravar arquivos no disco:", erro);
+    }
 };
 
 app.get("*", (req, res) => {
@@ -61,8 +78,8 @@ app.get("*", (req, res) => {
 
         delete respostas[id];
         delete caixa[id];
-        
-        salvarDados(); // Salva após deletar
+
+        salvarDados(); // Grava a remoção no arquivo imediatamente
 
         // O APP RECEBE APENAS ISSO
         return res.send(resposta);
@@ -78,7 +95,7 @@ app.get("*", (req, res) => {
     if (caixa[id]) {
 
         respostas[id] = mensagem;
-        salvarDados(); // Salva a nova resposta
+        salvarDados(); // Grava a nova resposta recebida no arquivo
 
         return res.send("Resposta recebida");
     }
@@ -87,7 +104,7 @@ app.get("*", (req, res) => {
     // NOVO PEDIDO DO APP
     // =========================
     caixa[id] = mensagem;
-    salvarDados(); // Salva o novo pedido
+    salvarDados(); // Grava o novo pedido na caixa do arquivo
 
     return res.send("Pedido armazenado");
 });
