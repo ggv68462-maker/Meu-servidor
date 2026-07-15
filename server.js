@@ -3,13 +3,12 @@ const fs = require('fs');
 const path = require('path');
 const app = express();
 
-app.use(express.json());
-app.use(express.text()); // Garante suporte caso venha como texto puro
+// 🔥 CONFIGURAÇÃO CRUCIAL: Aceita absolutamente QUALQUER tipo de dado (texto, binário, formulários)
+// Transforma tudo o que chega em um Buffer bruto, sem tentar adivinhar ou falhar por formato inválido
+app.use(express.raw({ type: '*/*', limit: '50mb' }));
 
-// Caminho temporário seguro no Render para guardar a fila
 const FILE_PATH = path.join('/tmp', 'mensagens_broker.json');
 
-// Função auxiliar para ler o estado atual do banco temporário
 function lerBanco() {
     if (!fs.existsSync(FILE_PATH)) return { filaA: {}, respostasB: {} };
     try {
@@ -19,34 +18,48 @@ function lerBanco() {
     }
 }
 
-// Função auxiliar para gravar alterações
 function salvarBanco(dados) {
     fs.writeFileSync(FILE_PATH, JSON.stringify(dados, null, 2));
 }
 
 // ==========================================
-// 1. COMPONENTE A - ENVIA MENSAGEM (Com ID)
+// 1. COMPONENTE A (Niotron Bot) - ENVIA QUALQUER COISA
 // ==========================================
 app.post('/enviar-a', (req, res) => {
-    const corpo = req.body.toString().trim();
+    // Converte o buffer bruto recebido diretamente em string UTF-8
+    let corpoBruto = req.body ? req.body.toString('utf8').trim() : "";
     
-    // Expressão regular para capturar "Id=XXXXX" ou "id=XXXXX" no início ou meio
-    const matchId = corpo.match(/id\s*=\s*(\d+)/i);
+    // Tratamento para decodificar caso o componente Web1 envie como URL Encoded (ex: ID%3D82828282+GOSTEI)
+    try {
+        if (corpoBruto.includes('%') || corpoBruto.includes('+')) {
+            corpoBruto = decodeURIComponent(corpoBruto.replace(/\+/g, ' '));
+        }
+    } catch (err) {
+        // Se falhar na decodificação, mantém o texto exatamente como veio do buffer
+    }
+
+    if (!corpoBruto) {
+        return res.status(400).send("Erro: Corpo da mensagem vazio.");
+    }
+
+    // Procura pela estrutura ID=XXXXX usando regex flexível no texto bruto decodificado
+    const matchId = corpoBruto.match(/id\s*=\s*(\d+)/i);
     
     if (!matchId) {
-        return res.status(400).send("Erro: Mensagem de A sem ID identificado.");
+        console.log(`[A - ERRO BRUTO] Recebido sem ID identificável: "${corpoBruto}"`);
+        return res.status(400).send("Erro: ID de usuário não localizado no fluxo.");
     }
     
     const idCodigo = matchId[1];
     const banco = lerBanco();
     
-    // Armazena a mensagem pública exatamente como veio de A para o Termux ver
-    banco.filaA[idCodigo] = corpo;
+    // Armazena o dado bruto público exatamente como veio
+    banco.filaA[idCodigo] = corpoBruto;
     salvarBanco(banco);
     
-    console.log(`[A] Recebido ID ${idCodigo}. Aguardando processamento do Termux...`);
+    console.log(`[A - SUCESSO] Armazenado ID ${idCodigo}. Conteúdo Bruto: "${corpoBruto}"`);
     
-    // Mantém a requisição de A aberta (Long Polling) até que B responda
+    // Inicia o mecanismo de espera (Long Polling) para segurar o Niotron até o Termux responder
     let tentativas = 0;
     const checarResposta = setInterval(() => {
         const bancoAtualizado = lerBanco();
@@ -54,63 +67,67 @@ app.post('/enviar-a', (req, res) => {
         if (bancoAtualizado.respostasB[idCodigo]) {
             clearInterval(checarResposta);
             
-            // Pega o conteúdo gerado por B
             const respostaOriginalB = bancoAtualizado.respostasB[idCodigo];
             
-            // Remove estritamente o "Id=XXXXXXXX" (e variações de espaços/letras) da string
+            // Remove cirurgicamente a marcação ID=XXXXXX da resposta do Termux para o App receber apenas dados
             const regexLimpeza = new RegExp(`id\\s*=\\s*${idCodigo}\\s*`, 'i');
             const respostaLimpa = respostaOriginalB.replace(regexLimpeza, '').trim();
             
-            // Limpa as duas mensagens do banco de dados (A e B limpos)
+            // Limpa as filas do arquivo temporário
             delete bancoAtualizado.filaA[idCodigo];
             delete bancoAtualizado.respostasB[idCodigo];
             salvarBanco(bancoAtualizado);
             
-            console.log(`[Render] Respondendo para o App A (Sem ID). Fila limpa.`);
+            console.log(`[Render] Respondendo de volta para o Bot Niotron (Sem ID): "${respostaLimpa}"`);
             return res.send(respostaLimpa);
         }
         
         tentativas++;
-        if (tentativas > 30) { // Timeout de 30 segundos para evitar travamento no Render
+        if (tentativas > 30) { 
             clearInterval(checarResposta);
             const bancoTimeout = lerBanco();
             delete bancoTimeout.filaA[idCodigo];
             salvarBanco(bancoTimeout);
-            return res.status(504).send("Timeout: O terminal B demorou para responder.");
+            return res.status(504).send("Timeout: O terminal do Termux demorou.");
         }
     }, 1000);
 });
 
 // ==========================================
-// 2. TERMUX (B) - PUSH/GET PARA LER A FILA
+// 2. TERMUX (B) - CONSOME A FILA BRUTA
 // ==========================================
 app.get('/procurar-mensagens', (req, res) => {
     const banco = lerBanco();
-    // Expõe a fila de forma pública para o seu Termux ler o que o A enviou
+    res.setHeader('Content-Type', 'application/json');
     return res.json(banco.filaA);
 });
 
 // ==========================================
-// 3. TERMUX (B) - DEVOLVE A RESPOSTA (Com ID)
+// 3. TERMUX (B) - DEVOLVE A RESPOSTA BRUTA
 // ==========================================
 app.post('/responder-b', (req, res) => {
-    const corpoB = req.body.toString().trim();
+    let corpoB = req.body ? req.body.toString('utf8').trim() : "";
+    
+    try {
+        if (corpoB.includes('%') || corpoB.includes('+')) {
+            corpoB = decodeURIComponent(corpoB.replace(/\+/g, ' '));
+        }
+    } catch (e) {}
+
     const matchId = corpoB.match(/id\s*=\s*(\d+)/i);
     
     if (!matchId) {
-        return res.status(400).send("Erro: Resposta de B sem ID identificado.");
+        return res.status(400).send("Erro: Resposta do Termux sem ID válido.");
     }
     
     const idCodigo = matchId[1];
     const banco = lerBanco();
     
-    // Armazena a resposta de B mantendo a estrutura íntegra temporariamente
     banco.respostasB[idCodigo] = corpoB;
     salvarBanco(banco);
     
-    console.log(`[B] Resposta recebida para o ID ${idCodigo}.`);
-    return res.send("OK: Resposta processada pelo transporte.");
+    return res.send("OK");
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Transporte rodando na porta ${PORT}`));
+app.listen(PORT, () => console.log(`Servidor de Transporte Totalmente Aberto na porta ${PORT}`));
