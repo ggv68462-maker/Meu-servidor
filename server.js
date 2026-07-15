@@ -1,47 +1,37 @@
 const express = require('express');
 const app = express();
 
-app.use(express.text({ type: '*/*' }));
+app.use(express.text({ type: '/' }));
 
-const PORT = process.env.PORT || 3000;
 const conexoes = {};
 
-// Captura o link que vem do Kodular
-app.get('/', (req, res) => {
-    // Verifica se a URL do aplicativo contém o ponto de interrogação
-    if (req.url.includes('?')) {
-        // Pega EXATAMENTE o texto puro que está depois do "?"
-        const textoPuro = req.url.split('?')[1];
+// App A envia: URL deve ser /enviar/ID_DO_CANAL (Ex: /enviar/12345)
+app.post('/enviar/:id', (req, res) => {
+const id = req.params.id;
 
-        if (textoPuro) {
-            conexoes[textoPuro] = res;
+conexoes[id] = res;  
 
-            // Limpa da memória após 60 segundos se o Termux não responder
-            setTimeout(() => {
-                if (conexoes[textoPuro]) {
-                    conexoes[textoPuro].status(200).send("");
-                    delete conexoes[textoPuro];
-                }
-            }, 60000);
-            return;
-        }
-    }
-    res.send("Online");
+setTimeout(() => {  
+    if (conexoes[id]) {  
+        conexoes[id].status(200).send("Timeout");  
+        delete conexoes[id];  
+    }  
+}, 60000);
+
 });
 
-// Entrega a lista com os textos puros para o Termux ler
-app.get('/termux/pendentes', (req, res) => {
-    res.status(200).json(Object.keys(conexoes));
+// Ponta B responde: URL deve ser /responder/ID_DO_CANAL (Ex: /responder/12345)
+app.post('/responder/:id', (req, res) => {
+const id = req.params.id;
+const resposta = req.body ? req.body.trim() : "";
+
+if (conexoes[id]) {  
+    conexoes[id].status(200).send(resposta);  
+    delete conexoes[id];  
+    return res.status(200).send("Enviado");  
+}  
+return res.status(404).send("Sem canal");
+
 });
 
-// Remove o comando da memória caso queira limpar manualmente
-app.post('/termux/resposta/:chave', (req, res) => {
-    const chave = req.params.chave;
-    if (conexoes[chave]) {
-        conexoes[chave].status(200).send("");
-        delete conexoes[chave];
-    }
-    res.status(200).send("");
-});
-
-app.listen(PORT);
+app.listen(3000);
