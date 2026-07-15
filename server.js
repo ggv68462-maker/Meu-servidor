@@ -2,87 +2,73 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Armazenamento temporário na memória do Render
-let dadosDeA = {}; // Guarda o que o Termux vai ler
-let dadosDeB = {}; // Guarda o que o App vai ler
+// Gavetas temporárias na memória do Render
+let dadosDeA = {}; 
+let dadosDeB = {}; 
 
-// 1. APP (A) ENVIA TUDO DEPOIS DO '?'
-// O App chama: https://onrender.com
-app.all('/salvarA', (req, res) => {
-    const urlCompleta = req.url;
+app.all('*', (req, res) => {
+    // Define o cabeçalho como texto puro para o App Inventor não dar erro 701
+    res.header("Content-Type", "text/plain; charset=utf-8");
+
+    const urlCompleta = req.url; // Pega tudo a partir da barra '/'
     const temInterrogacao = urlCompleta.indexOf('?');
 
-    if (temInterrogacao === -1) return res.send("Sem dados");
-
-    // Pega absolutamente TUDO que está depois do '?'
-    const stringBruta = urlCompleta.substring(temInterrogacao + 1);
-    
-    // Procura o ID na string (ex: ID=828282) para saber onde guardar
-    const matchId = stringBruta.match(/ID=([^& \s]+)/);
-    if (!matchId) return res.send("ID nao encontrado");
-    
-    const id = matchId[1];
-
-    // Guarda a informação bruta de A
-    dadosDeA[id] = stringBruta;
-    delete dadosDeB[id]; // Limpa histórico antigo se houver
-
-    res.send("Armazenado");
-});
-
-// 2. TERMUX (B) COLETA O QUE A MANDOU
-app.get('/lerParaTermux', (req, res) => {
-    res.json(dadosDeA);
-});
-
-// 3. TERMUX (B) RESPONDE DEVOLVENDO TUDO DEPOIS DO '?'
-// O Termux chama: https://onrender.com tudo bem?
-app.all('/salvarB', (req, res) => {
-    const urlCompleta = req.url;
-    const temInterrogacao = urlCompleta.indexOf('?');
-
-    if (temInterrogacao === -1) return res.send("Sem dados");
-
-    const stringBruta = urlCompleta.substring(temInterrogacao + 1);
-    
-    const matchId = stringBruta.match(/ID=([^& \s]+)/);
-    if (!matchId) return res.send("ID nao encontrado");
-    
-    const id = matchId[1];
-
-    // 1. APAGA a mensagem que o A tinha mandado (o Termux já leu)
-    delete dadosDeA[id];
-
-    // 2. Tira o ID da resposta para o App receber apenas a informação limpa
-    // Remove "ID=XXXXXX" e qualquer caractere que sobrou grudado
-    let informacaoLimpa = stringBruta.replace(/ID=[^& \s]+/, '').trim();
-    if (informacaoLimpa.startsWith('&')) informacaoLimpa = informacaoLimpa.substring(1);
-
-    // 3. Armazena temporariamente para o App pegar
-    dadosDeB[id] = informacaoLimpa;
-
-    res.send("Recebido");
-});
-
-// 4. APP (A) PEGA A INFORMAÇÃO LIMPA SEM O ID
-// O App chama: https://onrender.com
-app.get('/pegarResposta', (req, res) => {
-    const urlCompleta = req.url;
-    const matchId = urlCompleta.match(/ID=([^& \s]+)/);
-    
-    if (!matchId) return res.send("");
-    const id = matchId[1];
-
-    if (dadosDeB[id]) {
-        const respostaFinal = dadosDeB[id];
-        
-        // APAGA a resposta do B do Render imediatamente após enviar pro App
-        delete dadosDeB[id]; 
-        
-        return res.send(respostaFinal); // Envia só o texto limpo
+    // Se o app ou termux chamou o link sem o '?', retorna vazio e não quebra
+    if (temInterrogacao === -1) {
+        return res.send("");
     }
 
-    res.send(""); // Se B não respondeu ainda, volta vazio
+    // Recorta tudo o que está DEPOIS da interrogação de forma bruta
+    const stringBruta = urlCompleta.substring(temInterrogacao + 1);
+    
+    // Captura o número do ID que veio na string
+    const matchId = stringBruta.match(/ID=([^& \s]+)/);
+    if (!matchId) return res.send(""); // Se não achou a palavra ID=, ignora
+    
+    const id = matchId[1];
+
+    // --- IDENTIFICAÇÃO DOS FLUXOS ---
+
+    // 1. SE FOR O TERMUX CONSULTANDO: O termux vai chamar o link com a palavra "ler"
+    // Exemplo: https://onrender.com
+    if (stringBruta.includes('ler')) {
+        return res.json(dadosDeA);
+    }
+
+    // 2. SE FOR O TERMUX ENVIANDO A RESPOSTA: O termux coloca "RESPOSTA=" na frente
+    // Exemplo: https://onrender.com tudo bem?
+    if (stringBruta.includes('RESPOSTA=')) {
+        // Apaga a mensagem velha que o A tinha deixado (o Termux já leu e respondeu)
+        delete dadosDeA[id];
+
+        // Limpa a resposta: tira o ID e a palavra RESPOSTA= para deixar só o texto puro
+        let textoLimpo = stringBruta.replace(/ID=[^& \s]+/, '')
+                                    .replace(/RESPOSTA=/, '')
+                                    .replace(/&/g, '')
+                                    .trim();
+        
+        // Guarda na gaveta do B para o app buscar
+        dadosDeB[id] = decodeURIComponent(textoLimpo); 
+        return res.send("Recebido pelo Render");
+    }
+
+    // 3. SE FOR O APP TENTANDO PEGAR A RESPOSTA DO TERMUX: O app coloca "buscar" no link
+    // Exemplo: https://onrender.com
+    if (stringBruta.includes('buscar')) {
+        if (dadosDeB[id]) {
+            const respostaFinal = dadosDeB[id];
+            delete dadosDeB[id]; // Apaga do Render imediatamente após entregar pro App
+            return res.send(respostaFinal); // Entrega só o texto limpo de B
+        }
+        return res.send(""); // Se o Termux ainda não respondeu, volta vazio
+    }
+
+    // 4. FLUXO PADRÃO: Se o App enviar os dados direto com o ID
+    // Exemplo: https://onrender.com
+    dadosDeA[id] = stringBruta;
+    delete dadosDeB[id]; // Limpa respostas antigas desse ID
+
+    res.send("Armazenado no Render");
 });
 
 app.listen(PORT, () => console.log(`Rodando proxy na porta ${PORT}`));
