@@ -1,37 +1,45 @@
 const express = require('express');
 const app = express();
 
-app.use(express.text({ type: '/' }));
+app.use(express.text({ type: '*/*' }));
 
+const PORT = process.env.PORT || 10000;
 const conexoes = {};
 
-// App A envia: URL deve ser /enviar/ID_DO_CANAL (Ex: /enviar/12345)
-app.post('/enviar/:id', (req, res) => {
-const id = req.params.id;
-
-conexoes[id] = res;  
-
-setTimeout(() => {  
-    if (conexoes[id]) {  
-        conexoes[id].status(200).send("Timeout");  
-        delete conexoes[id];  
-    }  
-}, 60000);
-
+app.get('/', (req, res) => {
+    const rawUrl = req.url;
+    
+    if (rawUrl.includes('?')) {
+        const chaveIdentificadora = rawUrl.split('?')[1];
+        
+        conexoes[chaveIdentificadora] = res;
+        
+        setTimeout(() => {
+            if (conexoes[chaveIdentificadora]) {
+                conexoes[chaveIdentificadora].status(200).send(""); 
+                delete conexoes[chaveIdentificadora];
+            }
+        }, 55000);
+        return;
+    }
+    
+    res.send('Ativo');
 });
 
-// Ponta B responde: URL deve ser /responder/ID_DO_CANAL (Ex: /responder/12345)
-app.post('/responder/:id', (req, res) => {
-const id = req.params.id;
-const resposta = req.body ? req.body.trim() : "";
-
-if (conexoes[id]) {  
-    conexoes[id].status(200).send(resposta);  
-    delete conexoes[id];  
-    return res.status(200).send("Enviado");  
-}  
-return res.status(404).send("Sem canal");
-
+app.get('/termux/pendentes', (req, res) => {
+    return res.status(200).json(Object.keys(conexoes));
 });
 
-app.listen(3000);
+app.post('/termux/resposta/:chave', (req, res) => {
+    const chaveIdentificadora = req.params.chave;
+    const linkDoVideo = req.body ? req.body.trim() : "";
+
+    if (conexoes[chaveIdentificadora]) {
+        conexoes[chaveIdentificadora].status(200).send(linkDoVideo);
+        delete conexoes[chaveIdentificadora];
+        return res.status(200).send("Enviado");
+    }
+    return res.status(404).send("Expirou");
+});
+
+app.listen(PORT, '0.0.0.0');
