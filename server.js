@@ -5,8 +5,9 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Garante que a pasta exista no Render
+// Pasta para salvar os dados
 const pastaDados = path.join(__dirname, "dados_caixa");
+
 if (!fs.existsSync(pastaDados)) {
     fs.mkdirSync(pastaDados, { recursive: true });
 }
@@ -14,86 +15,134 @@ if (!fs.existsSync(pastaDados)) {
 const caminhoCaixa = path.join(pastaDados, "caixa.json");
 const caminhoRespostas = path.join(pastaDados, "respostas.json");
 
-const caixa = fs.existsSync(caminhoCaixa) ? JSON.parse(fs.readFileSync(caminhoCaixa, "utf8")) : {};
-const respostas = fs.existsSync(caminhoRespostas) ? JSON.parse(fs.readFileSync(caminhoRespostas, "utf8")) : {};
+// Carrega dados existentes
+let caixa = {};
+let respostas = {};
 
-const salvarDados = () => {
-    try {
-        fs.writeFileSync(caminhoCaixa, JSON.stringify(caixa, null, 2), "utf8");
-        fs.writeFileSync(caminhoRespostas, JSON.stringify(respostas, null, 2), "utf8");
-    } catch (e) {
-        console.error("Erro ao salvar", e);
+try {
+    if (fs.existsSync(caminhoCaixa)) {
+        caixa = JSON.parse(fs.readFileSync(caminhoCaixa, "utf8"));
     }
-};
+
+    if (fs.existsSync(caminhoRespostas)) {
+        respostas = JSON.parse(fs.readFileSync(caminhoRespostas, "utf8"));
+    }
+} catch (e) {
+    console.log("Erro carregando dados:", e);
+}
+
+// Salvar
+function salvarDados() {
+    fs.writeFileSync(
+        caminhoCaixa,
+        JSON.stringify(caixa, null, 2),
+        "utf8"
+    );
+
+    fs.writeFileSync(
+        caminhoRespostas,
+        JSON.stringify(respostas, null, 2),
+        "utf8"
+    );
+}
+
 
 app.get("*", (req, res) => {
+
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
 
     const url = decodeURIComponent(req.url).trim();
 
-    // =========================
-    // MOSTRAR A CAIXA
-    // =========================
+
+    // VER CAIXA
     if (url === "/?caixa") {
-        return res.json(caixa);
+        res.setHeader("Content-Type", "application/json");
+        return res.send(JSON.stringify(caixa, null, 2));
     }
 
-    if (!url.startsWith("/?"))
+
+    if (!url.startsWith("/?")) {
         return res.send("");
+    }
+
 
     let texto = url.substring(2).trim();
+
+    // Remove ID=
     texto = texto.replace(/^ID=/i, "");
 
-    // CORREÇÃO DO CORTE: Identifica onde a mensagem começa de verdade
-    // Se a mensagem do seu app já começa com parênteses, chaves ou um padrão fixo, cortamos ali.
-    // Caso contrário, pegamos o último espaço para isolar o ID completo (ex: "1234 B+") da mensagem.
-    const ultimoEspaco = texto.lastIndexOf(" ");
+
+    const primeiroEspaco = texto.indexOf(" ");
+
 
     // =========================
-    // APP BUSCANDO RESPOSTA (Não tem espaço separando mensagem)
+    // APP BUSCANDO RESPOSTA
+    // Ex: /?1234
     // =========================
-    if (ultimoEspaco === -1) {
+    if (primeiroEspaco === -1) {
+
         const id = texto;
 
-        if (!respostas[id])
+
+        if (!respostas[id]) {
             return res.send("");
+        }
+
 
         const resposta = respostas[id];
 
+
         delete respostas[id];
         delete caixa[id];
+
         salvarDados();
+
 
         return res.send(resposta);
     }
 
-    // Separa o ID completo da mensagem usando o ponto de corte correto
-    const id = texto.substring(0, ultimoEspaco).trim();
-    const mensagemPura = texto.substring(ultimoEspaco + 1).trim();
 
-    // Apenas adiciona entre () a mensagem recebida, exatamente como você pediu
-    const novaMensagem = `(${mensagemPura})`;
 
     // =========================
-    // SE O ID JÁ EXISTE NA CAIXA, APENAS CONCATENA (COPIA E COLA LADO A LADO)
+    // SEPARA ID E MENSAGEM
     // =========================
+
+    const id = texto.substring(0, primeiroEspaco).trim();
+
+    const mensagem = texto
+        .substring(primeiroEspaco + 1)
+        .trim();
+
+
+
+    // =========================
+    // RESPOSTA DA PESSOA
+    // =========================
+
     if (caixa[id]) {
-        respostas[id] = (respostas[id] || "") + novaMensagem;
-        caixa[id] = (caixa[id] || "") + novaMensagem;
-        
+
+        respostas[id] = `(${mensagem})`;
+
         salvarDados();
+
         return res.send("Resposta recebida");
     }
+
+
 
     // =========================
     // NOVO PEDIDO DO APP
     // =========================
-    caixa[id] = novaMensagem;
-    respostas[id] = novaMensagem;
+
+    caixa[id] = `(${mensagem})`;
+
     salvarDados();
 
     return res.send("Pedido armazenado");
+
 });
+
+
 
 app.listen(PORT, () => {
     console.log(`Servidor iniciado na porta ${PORT}`);
