@@ -9,50 +9,45 @@ const arquivo = "caixa.txt";
 
 
 // =========================
-// VER CAIXA
+// MOSTRAR CAIXA
 // =========================
 
-app.get("/?caixa", (req, res) => {
+app.get("/", (req, res) => {
 
-    if (!fs.existsSync(arquivo)) {
-        return res.send("");
-    }
-
-    return res.type("text").send(
-        fs.readFileSync(arquivo, "utf8")
-    );
-
-});
+    let url = decodeURIComponent(req.url).trim();
 
 
+    if (url === "/?caixa") {
 
-// =========================
-// RECEBER MENSAGEM
-// =========================
+        if (!fs.existsSync(arquivo)) {
+            return res.send("");
+        }
 
-app.get("*", (req, res) => {
-
-
-    let texto = decodeURIComponent(req.url);
-
-
-    if (!texto.startsWith("/?")) {
-        return res.send("");
+        return res
+            .type("text")
+            .send(fs.readFileSync(arquivo, "utf8"));
     }
 
 
-    let mensagem = texto.substring(2).trim();
 
-
-
-    if (mensagem === "caixa") {
+    if (!url.startsWith("/?")) {
         return res.send("");
     }
 
 
 
-    // salva exatamente o que chegou
+    // pega somente o que veio depois do ?
+    let mensagem = url.substring(2);
 
+
+
+    if (!mensagem) {
+        return res.send("");
+    }
+
+
+
+    // salva exatamente o que recebeu
     fs.appendFileSync(
         arquivo,
         mensagem + "\n",
