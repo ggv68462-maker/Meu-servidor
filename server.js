@@ -26,9 +26,12 @@ app.get('/termux/pendentes', (req, res) => {
     res.status(200).json(Object.keys(conexoes));
 });
 
-app.post('/termux/resposta/:chave', (req, res) => {
-    const chave = req.params.chave;
-    const resposta = req.body ? req.body.trim() : "";
+app.post('/termux/resposta', (req, res) => {
+    const dados = req.body ? req.body.trim() : "";
+    const partes = dados.split('|||');
+    const chave = partes[0];
+    const resposta = partes[1] || "";
+
     if (conexoes[chave]) {
         conexoes[chave].status(200).send(resposta);
         delete conexoes[chave];
