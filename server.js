@@ -9,8 +9,8 @@ const conexoes = {};
 app.get('/', (req, res) => {
     const rawUrl = req.url;
     if (rawUrl.includes('?')) {
-        let info = rawUrl.split('?')[1];
-        info = decodeURIComponent(info).replace(/%20/g, ' ');
+        const partesUrl = rawUrl.split('?');
+        const info = decodeURIComponent(partesUrl[1]).replace(/%20/g, ' ').trim();
 
         conexoes[info] = res;
 
