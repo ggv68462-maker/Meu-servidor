@@ -3,44 +3,46 @@ const app = express();
 
 app.use(express.text({ type: '*/*' }));
 
-const PORT = process.env.PORT || 10000;
-const conexoes = {};
+const PORT = process.env.PORT || 3000;
+let conexoes = {};
 
+// Captura o link vindo do Kodular
 app.get('/', (req, res) => {
-    const rawUrl = req.url;
-    if (rawUrl.includes('?')) {
-        const partesUrl = rawUrl.split('?');
-        const info = decodeURIComponent(partesUrl[1]).replace(/%20/g, ' ').trim();
+    if (req.url.includes('?')) {
+        const textoPuro = req.url.split('?')[1]; // Pega só o que vem depois do "?"
 
-        conexoes[info] = res;
+        if (textoPuro && textoPuro.trim() !== "") {
+            conexoes[textoPuro] = res;
 
-        setTimeout(() => {
-            if (conexoes[info]) {
-                conexoes[info].status(200).send("");
-                delete conexoes[info];
-            }
-        }, 55000);
-        return;
+            // Limpa após 60 segundos por segurança se o Termux sumir
+            setTimeout(() => {
+                if (conexoes[textoPuro]) {
+                    conexoes[textoPuro].status(200).send("");
+                    delete conexoes[textoPuro];
+                }
+            }, 60000);
+            return;
+        }
     }
-    res.send('Ativo');
+    res.send("Online");
 });
 
+// O Termux lê aqui. No momento em que ele lê, o servidor entrega e JÁ APAGA da memória!
 app.get('/termux/pendentes', (req, res) => {
-    res.status(200).json(Object.keys(conexoes));
+    const listaAtual = Object.keys(conexoes);
+    
+    // Responde para o Termux
+    res.status(200).json(listaAtual);
+
+    // Destrava os aplicativos em segundo plano enviando resposta vazia
+    listaAtual.forEach(chave => {
+        if (conexoes[chave]) {
+            conexoes[chave].status(200).send("");
+        }
+    });
+
+    // Zera a memória RAM na hora para a próxima leitura vir limpa
+    conexoes = {};
 });
 
-app.post('/termux/resposta', (req, res) => {
-    const dados = req.body ? req.body.trim() : "";
-    const partes = dados.split('|||');
-    const chave = partes[0];
-    const resposta = partes[1] || "";
-
-    if (conexoes[chave]) {
-        conexoes[chave].status(200).send(resposta);
-        delete conexoes[chave];
-        return res.status(200).send("Enviado");
-    }
-    res.status(404).send("Expirou");
-});
-
-app.listen(PORT, '0.0.0.0');
+app.listen(PORT);
