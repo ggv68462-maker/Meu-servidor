@@ -1,48 +1,76 @@
 const express = require('express');
 const app = express();
 
+// Mantém o suporte para ler o formato de texto que seu Termux envia
 app.use(express.text({ type: '*/*' }));
 
-const PORT = process.env.PORT || 3000;
-let conexoes = {};
+const PORT = process.env.PORT || 10000;
 
-// Captura o link vindo do Kodular
+// Mudamos para Array para conseguir guardar múltiplos pedidos do mesmo ID
+let conexoes = [];
+
 app.get('/', (req, res) => {
-    if (req.url.includes('?')) {
-        const textoPuro = req.url.split('?')[1]; // Pega só o que vem depois do "?"
+    const rawUrl = req.url;
+    if (rawUrl.includes('?')) {
+        const partesUrl = rawUrl.split('?');
+        const info = decodeURIComponent(partesUrl[1]).replace(/%20/g, ' ').trim();
 
-        if (textoPuro && textoPuro.trim() !== "") {
-            conexoes[textoPuro] = res;
+        // Cria o registro da nova conexão recebida
+        const novaConexao = { id: info, respostaHttp: res };
+        conexoes.push(novaConexao);
 
-            // Limpa após 60 segundos por segurança se o Termux sumir
-            setTimeout(() => {
-                if (conexoes[textoPuro]) {
-                    conexoes[textoPuro].status(200).send("");
-                    delete conexoes[textoPuro];
-                }
-            }, 60000);
-            return;
-        }
+        // Se o cliente fechar a aba/desconectar, limpa ele da lista para evitar travamentos
+        req.on('close', () => {
+            conexoes = conexoes.filter(c => c !== novaConexao);
+        });
+
+        // Mantém preso por 25 segundos (Abaixo do limite de 30s do Render)
+        setTimeout(() => {
+            if (conexoes.includes(novaConexao)) {
+                try { novaConexao.respostaHttp.status(200).send(""); } catch(e){}
+                conexoes = conexoes.filter(c => c !== novaConexao); // Remove da lista
+            }
+        }, 25000);
+        return;
     }
-    res.send("Online");
+    res.send('Ativo');
 });
 
-// O Termux lê aqui. No momento em que ele lê, o servidor entrega e JÁ APAGA da memória!
+// Retorna apenas a lista de IDs únicos pendentes para o Termux
 app.get('/termux/pendentes', (req, res) => {
-    const listaAtual = Object.keys(conexoes);
-    
-    // Responde para o Termux
-    res.status(200).json(listaAtual);
-
-    // Destrava os aplicativos em segundo plano enviando resposta vazia
-    listaAtual.forEach(chave => {
-        if (conexoes[chave]) {
-            conexoes[chave].status(200).send("");
-        }
-    });
-
-    // Zera a memória RAM na hora para a próxima leitura vir limpa
-    conexoes = {};
+    const idsUnicos = [...new Set(conexoes.map(c => c.id))];
+    res.status(200).json(idsUnicos);
 });
 
-app.listen(PORT);
+// Rota onde o Termux responde e limpa TUDO daquele ID
+app.post('/termux/resposta', (req, res) => {
+    const dados = req.body ? req.body.trim() : "";
+    const partes = dados.split('|||');
+    const chave = partes[0]; // O ID do usuário
+    const resposta = partes[1] || ""; // O "OK" ou qualquer outra resposta
+
+    // Filtra todas as conexões que batem com esse ID específico
+    const conexoesDoUsuario = conexoes.filter(c => c.id === chave);
+
+    if (conexoesDoUsuario.length > 0) {
+        // Responde e libera TODAS as requisições presas desse ID de uma vez só
+        conexoesDoUsuario.forEach(con -> {
+            try {
+                con.respostaHttp.status(200).send(resposta);
+            } catch (e) {
+                // Ignora se a conexão já tiver sido fechada
+            }
+        });
+
+        // APAGA TUDO: Remove permanentemente todas as conexões desse ID do array global
+        conexoes = conexoes.filter(c => c.id !== chave);
+
+        return res.status(200).send("Enviado e limpo");
+    }
+
+    res.status(404).send("Expirou ou ID nao encontrado");
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Servidor rodando e gerenciando arrays na porta ${PORT}`);
+});
