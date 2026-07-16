@@ -9,8 +9,11 @@ const conexoes = {};
 app.get('/', (req, res) => {
     const rawUrl = req.url;
     if (rawUrl.includes('?')) {
-        const info = rawUrl.split('?')[1];
+        let info = rawUrl.split('?')[1];
+        info = decodeURIComponent(info).replace(/%20/g, ' ');
+
         conexoes[info] = res;
+
         setTimeout(() => {
             if (conexoes[info]) {
                 conexoes[info].status(200).send("");
