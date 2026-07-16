@@ -1,6 +1,7 @@
 const express = require('express');
 const app = express();
 
+// Lê qualquer formato de texto enviado pelo Termux
 app.use(express.text({ type: '*/*' }));
 
 const PORT = process.env.PORT || 10000;
@@ -12,18 +13,24 @@ app.get('/', (req, res) => {
     if (rawUrl.includes('?')) {
         const partesUrl = rawUrl.split('?');
         
-        // Pega tudo que vem depois do /? remove o %20 e limpa os espaços das pontas
+        // Remove o %20, decodifica espaços e limpa as pontas
         let info = decodeURIComponent(partesUrl[1]).replace(/%20/g, ' ').trim();
+
+        // Se o app mandou coisas acumuladas antes, isola só o último comando por segurança
+        if (info.includes('ID=')) {
+            const trechos = info.split('ID=');
+            info = 'ID=' + trechos[trechos.length - 1].trim();
+        }
 
         const novaConexao = { id: info, respostaHttp: res };
         conexoes.push(novaConexao);
 
-        // Se o aplicativo fechar ou desconectar, limpa da memória
+        // Se o usuário fechar o app, limpa a memória
         req.on('close', () => {
             conexoes = conexoes.filter(c => c !== novaConexao);
         });
 
-        // Timeout seguro para o Render (25 segundos)
+        // Timeout seguro para o Render não dar erro 504
         setTimeout(() => {
             if (conexoes.includes(novaConexao)) {
                 try { novaConexao.respostaHttp.status(200).send(""); } catch(e){}
@@ -35,40 +42,40 @@ app.get('/', (req, res) => {
     res.send('Ativo');
 });
 
-// Envia a lista limpa (sem %20) para o Termux ler
+// Rota onde o Termux consulta os comandos que chegaram
 app.get('/termux/pendentes', (req, res) => {
     const idsUnicos = [...new Set(conexoes.map(c => c.id))];
     res.status(200).json(idsUnicos);
 });
 
-// Recebe a resposta do Termux e faz a separação
+// Rota onde o Termux entrega o link do vídeo
 app.post('/termux/resposta', (req, res) => {
     const dados = req.body ? req.body.trim() : "";
     
-    // Separa o código vindo do Termux usando o separador |||
+    // Separa usando o |||
     const partes = dados.split('|||');
-    const chave = partes[0];      // O ID/Código que veio do App original
-    const resposta = partes[1] || ""; // O "OK" enviado pelo Termux
+    const chave = partes[0];         // O comando/ID recebido do usuário
+    const linkVideo = partes[1] || ""; // O link puro do vídeo que você configurou no Termux
 
     const conexoesDoUsuario = conexoes.filter(c => c.id === chave);
 
     if (conexoesDoUsuario.length > 0) {
         conexoesDoUsuario.forEach(con => {
             try {
-                // Devolve o "OK" para o componente Web1 do aplicativo
-                con.respostaHttp.status(200).send(resposta);
+                // MANDA O LINK DO VÍDEO PURO E LIMPO PRO COMPONENTE WEB1 DO CELULAR
+                con.respostaHttp.status(200).send(linkVideo.trim());
             } catch (e) {}
         });
 
-        // APAGA TUDO: Remove permanentemente qualquer rastro desse ID do servidor
+        // APAGA TUDO imediatamente após enviar o vídeo
         conexoes = conexoes.filter(c => c.id !== chave);
 
-        return res.status(200).send("Enviado e limpo");
+        return res.status(200).send("Vídeo enviado e fila limpa");
     }
 
-    res.status(404).send("Expirou");
+    res.status(404).send("Pedido expirou");
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+    console.log(`Servidor rodando e aguardando na porta ${PORT}`);
 });
